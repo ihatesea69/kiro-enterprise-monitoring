@@ -50,9 +50,7 @@ Bucket policy lưu role theo unique ID. Khi role bị tạo lại (deploy lại 
 # Dataset của sample: <STACK_PREFIX>-<tên dataset trong cfn/02-quicksight.yaml>
 aws quicksight create-ingestion --aws-account-id <observability-account-id> --region ap-southeast-1 \
   --data-set-id kiro-<slug>-base-user-activity --ingestion-id manual-$(date +%Y%m%d%H%M%S)
-# Dashboard audit
-aws quicksight create-ingestion --aws-account-id <observability-account-id> --region ap-southeast-1 \
-  --data-set-id kiro-mon-audit-<slug> --ingestion-id manual-$(date +%Y%m%d%H%M%S)
+# Dashboard audit: Direct Query (D10), không có SPICE để refresh. Mở dashboard là đọc dữ liệu mới.
 # CID: trong CloudShell
 cid-cmd refresh --dashboard-id kiro-user-activity
 ```

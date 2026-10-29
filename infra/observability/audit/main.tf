@@ -1,6 +1,9 @@
 # Dashboard "Kiro Request Audit - <customer>" (task 8.2, apply is [XÁC NHẬN]).
 # Reads only the view kiro_<slug>.kiro_request_audit built by
 # tools/build_audit_views.py, which never selects source IP or the full user agent.
+# Direct Query, not SPICE (decision D10): no daily refresh re-reads 13 months of
+# trail logs, and nothing is stored in SPICE. Each visual runs one Athena query
+# when the dashboard opens.
 # Provider: observability account, QuickSight Region (D6).
 #
 # [CHƯA XÁC MINH] Not yet planned against a real QuickSight account: the
@@ -44,12 +47,6 @@ variable "request_ids_match" {
   default     = false
 }
 
-variable "refresh_time_utc" {
-  description = "After the 04:00 SPICE refresh of the sample."
-  type        = string
-  default     = "04:30"
-}
-
 locals {
   id       = "kiro-mon-audit-${var.slug}"
   database = "kiro_${replace(var.slug, "-", "_")}"
@@ -86,7 +83,7 @@ resource "aws_quicksight_data_source" "this" {
 resource "aws_quicksight_data_set" "this" {
   data_set_id = local.id
   name        = "Kiro request audit - ${var.display_name}"
-  import_mode = "SPICE"
+  import_mode = "DIRECT_QUERY"
 
   physical_table_map {
     physical_table_map_id = "audit"
@@ -107,19 +104,6 @@ resource "aws_quicksight_data_set" "this" {
   permissions {
     principal = var.owner_arn
     actions   = local.set_owner_actions
-  }
-}
-
-resource "aws_quicksight_refresh_schedule" "this" {
-  data_set_id = aws_quicksight_data_set.this.data_set_id
-  schedule_id = "${local.id}-daily"
-  schedule {
-    refresh_type = "FULL_REFRESH"
-    schedule_frequency {
-      interval        = "DAILY"
-      time_of_the_day = var.refresh_time_utc
-      timezone        = "UTC"
-    }
   }
 }
 

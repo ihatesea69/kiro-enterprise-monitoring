@@ -49,7 +49,7 @@ A dashed line means a Lambda in the observability management account reads a cus
 
 ## Cost estimate
 
-[AWS Pricing Calculator: 200 customers, month 13+, no KMS, 1 author](https://calculator.aws/#/estimate?id=21b756c3d8f28f40bd87c8dc4bc7cc55b5e70c55). Click **Update estimate** after opening it, so the calculator recomputes at current prices.
+[AWS Pricing Calculator: 200 customers, month 13+, no KMS, 1 author, audit Direct Query](https://calculator.aws/#/estimate?id=55ea2e104669c6c5565d79a8ef7b473076be2694). Click **Update estimate** after opening it, so the calculator recomputes at current prices.
 
 | Assumption | Value |
 |---|---|
@@ -57,9 +57,12 @@ A dashed line means a Lambda in the observability management account reads a cus
 | Data events | 100 per user per day, 22 working days (not measured yet, OQ-1) |
 | Retention | 13 months (D5), so the figures are for month 13 onward |
 | QuickSight | 1 author, no readers, operator only (D1) |
+| Audit dashboard | Direct Query, no SPICE copy (D10); 100 dashboard opens x 4 visuals a month across all customers |
 | Encryption | SSE-S3 everywhere, no KMS keys (D9) |
 
-Computed from the public AWS price list files, not read from the calculator total: about 350 USD a month. 44% of it grows with the number of users (SPICE, CloudTrail data events, Athena scans of the audit logs), so doubling the users per customer raises the total by about 45%. The largest lines are SPICE (about 87 USD, mostly the audit dataset with one row per request) and S3 GET requests (about 90 USD, because the audit dataset re-reads every kept log file on each daily full refresh). CloudTrail data events are billed to each customer's own account.
+S3 request counts come from the design, not round numbers: CloudTrail delivers about one log file per 5 minutes of activity plus one digest file per hour; the sample's request counts scale its own 30-day measurement to 13 months of history; prompt-log file cadence is not measured yet (OQ-9).
+
+Computed from the public AWS price list files, not read from the calculator total: about 120 USD a month. Of that, about 54 USD (CloudTrail data events and the customer-side S3 buckets) is billed to the customers' own accounts. Half of the total grows with the number of users, so doubling the users per customer raises it by about 50%.
 
 ## Open questions
 
