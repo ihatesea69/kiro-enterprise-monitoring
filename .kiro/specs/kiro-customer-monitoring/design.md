@@ -425,7 +425,7 @@ Lưu ý:
 - Phí CloudTrail tính cho account sở hữu trail, tức account khách. Phải ghi điều này trong báo giá.
 - Khoản dễ đội nhất là số reader QuickSight. Chỉ cấp quyền theo danh sách ở D1.
 - Không có KMS key nào (D9). Phiên bản dùng KMS cần 3 key mỗi khách. Ước lượng với 200 khách, 100 user mỗi khách, từ tháng thứ 13: 2.220 USD/tháng có KMS, 400 USD/tháng không có KMS. KMS chiếm 1.820 USD, gồm phí key có rotation và phí Decrypt khi refresh audit đọc lại file log. Nguồn: file giá công khai `awskms` ap-southeast-1 và us-east-1 (1 USD mỗi key version mỗi tháng, 0,03 USD cho 10.000 request), tính bằng script, chưa đối chiếu với tổng của calculator.
-- Không có KMS thì số user mỗi khách tăng gấp đôi làm tổng tăng khoảng 39%. Phần tăng theo user là SPICE, phí CloudTrail data event và Athena quét log audit. Số event mỗi user là giả định 100 event/ngày cho tới khi có OQ-1.
+- Không có KMS thì số user mỗi khách tăng gấp đôi làm tổng tăng khoảng 39% (2 author, 10 reader). Với 1 author, 0 reader (người vận hành yêu cầu 2026-10-29): khoảng 350 USD/tháng, gấp đôi user thì tăng khoảng 45%. Phần tăng theo user là SPICE, phí CloudTrail data event và Athena quét log audit. Số event mỗi user là giả định 100 event/ngày cho tới khi có OQ-1.
 
 ## 10. Quyết định cần chốt
 
