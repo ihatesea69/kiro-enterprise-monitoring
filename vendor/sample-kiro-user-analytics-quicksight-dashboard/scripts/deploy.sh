@@ -14,6 +14,9 @@
 #   KIRO_SOURCE_ACCOUNT_ID - default "" (this account). PATCH P1: account that
 #                        writes the Kiro report, when the bucket is in another
 #                        account. Set KIRO_LOGS_PREFIX explicitly in that case.
+#   PERMISSIONS_BOUNDARY_ARN - default "". PATCH P5: managed policy ARN set as
+#                        the permissions boundary of the normalizer and
+#                        identity-map roles.
 #   QS_IAM_ROLE_NAME   - default aws-quicksight-service-role-v0 (the QS-managed
 #                        default). Override if your account is configured to
 #                        use an existing role under QuickSight -> Manage
@@ -80,6 +83,9 @@ IDC_REGION="${IDC_REGION:-}"
 IDC_ROLE_ARN="${IDC_ROLE_ARN:-}"
 IDC_EXTERNAL_ID="${IDC_EXTERNAL_ID:-}"
 KIRO_SOURCE_ACCOUNT_ID="${KIRO_SOURCE_ACCOUNT_ID:-}"
+# PATCH P5 (kiro-enterprise-monitoring): permissions boundary for the roles
+# this script creates, for accounts that deny iam:CreateRole without one.
+PERMISSIONS_BOUNDARY_ARN="${PERMISSIONS_BOUNDARY_ARN:-}"
 IDENTITY_MAP_REFRESH_SCHEDULE="${IDENTITY_MAP_REFRESH_SCHEDULE:-cron(30 3 * * ? *)}"
 ALARM_EMAIL="${ALARM_EMAIL:-}"
 LOG_RETENTION_DAYS="${LOG_RETENTION_DAYS:-30}"
@@ -330,7 +336,8 @@ aws cloudformation deploy \
         "WorkgroupName=${WORKGROUP_NAME}" \
         "NormalizerLambdaCodeS3Key=${NRM_CODE_KEY}" \
         "AlarmEmail=${ALARM_EMAIL}" \
-        "SourceAccountId=${KIRO_SOURCE_ACCOUNT_ID}"
+        "SourceAccountId=${KIRO_SOURCE_ACCOUNT_ID}" \
+        "PermissionsBoundaryArn=${PERMISSIONS_BOUNDARY_ARN}"
 
 if [[ -z "${NRM_CODE_KEY}" ]]; then
     echo ">> Staging normalizer zip (first deploy) and re-deploying ${DATA_STACK}"
@@ -351,7 +358,8 @@ if [[ -z "${NRM_CODE_KEY}" ]]; then
             "WorkgroupName=${WORKGROUP_NAME}" \
             "NormalizerLambdaCodeS3Key=${NRM_KEY}" \
             "AlarmEmail=${ALARM_EMAIL}" \
-            "SourceAccountId=${KIRO_SOURCE_ACCOUNT_ID}"
+            "SourceAccountId=${KIRO_SOURCE_ACCOUNT_ID}" \
+            "PermissionsBoundaryArn=${PERMISSIONS_BOUNDARY_ARN}"
 fi
 
 DATABASE="$(aws cloudformation describe-stacks --region "${REGION}" --stack-name "${DATA_STACK}" \
@@ -521,7 +529,8 @@ if [[ "${IDENTITY_MAPPING}" == "true" ]]; then
             "AthenaResultsBucket=${RESULTS_BUCKET}" \
             "KiroLogsBucket=${KIRO_LOGS_BUCKET}" \
             "LambdaCodeS3Key=${LAMBDA_KEY}" \
-            "RefreshSchedule=${IDENTITY_MAP_REFRESH_SCHEDULE}"
+            "RefreshSchedule=${IDENTITY_MAP_REFRESH_SCHEDULE}" \
+            "PermissionsBoundaryArn=${PERMISSIONS_BOUNDARY_ARN}"
 
     IDMAP_BUCKET="$(aws cloudformation describe-stacks --region "${REGION}" --stack-name "${IDMAP_STACK}" \
         --query "Stacks[0].Outputs[?OutputKey=='IdentityMapBucketName'].OutputValue" --output text)"

@@ -82,7 +82,18 @@ Parameters:
       before notifications are delivered. Leave blank to skip alarms
       entirely (no SNS topic is created).
 
+  # PATCH P5 (kiro-enterprise-monitoring): accounts whose IAM policy denies
+  # iam:CreateRole without a specific permissions boundary.
+  PermissionsBoundaryArn:
+    Type: String
+    Default: ""
+    AllowedPattern: "^$|^arn:aws[a-z-]*:iam::[0-9]{12}:policy/.+"
+    Description: >
+      Optional. Managed policy ARN set as the permissions boundary of the
+      normalizer role. Leave blank when the account does not require one.
+
 Conditions:
+  HasPermissionsBoundary: !Not [!Equals [!Ref PermissionsBoundaryArn, ""]]  # PATCH P5
   HasKmsKey: !Not [!Equals [!Ref KmsKeyArn, ""]]
   HasNormalizerCode: !Not [!Equals [!Ref NormalizerLambdaCodeS3Key, ""]]
   HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, ""]]
@@ -238,6 +249,8 @@ Resources:
   NormalizerLambdaRole:
     Type: AWS::IAM::Role
     Properties:
+      # PATCH P5 (kiro-enterprise-monitoring)
+      PermissionsBoundary: !If [HasPermissionsBoundary, !Ref PermissionsBoundaryArn, !Ref AWS::NoValue]
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
         Statement:

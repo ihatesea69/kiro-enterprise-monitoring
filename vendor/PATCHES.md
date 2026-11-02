@@ -56,6 +56,14 @@ Added 2026-10-29. The operator chose SSE-S3 for every bucket this project create
 
 Diff size against `d73fc39`, tests excluded: 6 files, 63 insertions, 68 deletions. P4 alone: 3 files, 16 insertions, 59 deletions.
 
+### P5. Optional permissions boundary on the roles the sample creates
+
+Added 2026-11-02. The first real deploy into the observability account failed on `NormalizerLambdaRole`: an identity policy in that account denies `iam:CreateRole` unless the request sets one specific permissions boundary.
+
+- `cfn/01-data-layer.yaml` and `cfn/03-identity-mapping.yaml`: new parameter `PermissionsBoundaryArn`, default empty, pattern `^$|^arn:aws[a-z-]*:iam::[0-9]{12}:policy/.+`. `NormalizerLambdaRole` and `IdentityMapLambdaRole` get `PermissionsBoundary: !If [HasPermissionsBoundary, !Ref PermissionsBoundaryArn, !Ref AWS::NoValue]`. These are the only `AWS::IAM::Role` resources in the three templates.
+- `scripts/deploy.sh`: new env var `PERMISSIONS_BOUNDARY_ARN`, default empty, passed to both data-layer deploys and the identity-map deploy. Not passed to the QuickSight stack, which creates no role.
+- Empty value keeps upstream behaviour: `AWS::NoValue` drops the property.
+
 ## Tests
 
 `tests/test_crossaccount_patches.py` has 13 tests for P1-P3. Each patch is tested with its new input both set and empty. `tests/test_no_kms_patch.py` has 7 tests for P4.
@@ -65,10 +73,12 @@ Diff size against `d73fc39`, tests excluded: 6 files, 63 insertions, 68 deletion
 | Upstream, before patching | 145 | 134 | 10 | 1 |
 | After P1-P3 | 158 | 147 | 10 | 1 |
 | After P1-P4 | 165 | 154 | 10 | 1 |
+| After P1-P5 | 170 | 159 | 10 | 1 |
 
 - The 10 errors are the same in both runs, all in `test_versioning.TestTagMerge`. That test starts `bash` through Python `subprocess`, which on this Windows machine resolves to the WSL launcher in System32 instead of Git Bash and fails with a WSL RPC error. They do not touch any patched code path.
 - Against the five upstream files restored byte-exact, 9 of the 13 new tests fail. The 4 that pass on upstream guard upstream behaviour that must survive (one `Conditions` block, the same-account `FAIL`, no `ExternalId` when the variable is empty or unset).
 - P4: against the three upstream files restored byte-exact, all 7 P4 tests fail.
+- P5: `tests/test_permissions_boundary_patch.py` has 5 tests. Against the tree before P5 (`git archive HEAD`), all 5 fail. `cfn-lint` on all three templates after P5: 0 findings.
 - `cfn-lint` 1.52.0 on all three templates: 0 findings before and after, including after P4.
 - `bash -n` on `deploy.sh`, `preflight.sh` and `teardown.sh`: 0 errors after patching.
 - `preflight.sh` run under Git Bash with a stub `aws` CLI: cross-account prints `[WARN] report bucket belongs to account ...` and makes 0 list calls on the bucket; same-account still prints `[FAIL] user_report not found` after 1 list call.
