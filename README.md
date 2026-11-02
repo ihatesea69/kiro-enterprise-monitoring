@@ -10,8 +10,6 @@ A design for monitoring how a customer's organization uses [Kiro](https://kiro.d
 | 4 | CloudTrail data events | Which request was made, by whom, when, and did it fail? | A trail that records data events only |
 | 5 | Kiro prompt logging | What was asked and answered (audit only) | Prompt log bucket, kept in the customer account |
 
-**Status: design only. No AWS resource has been created.** The requirements, the design and the task plan are in [`.kiro/specs/kiro-customer-monitoring/`](.kiro/specs/kiro-customer-monitoring/).
-
 ## Architecture
 
 ![Kiro Enterprise Monitoring architecture](diagrams/kiro-customer-monitoring.png)
@@ -51,17 +49,20 @@ A dashed line means a Lambda in the observability management account reads a cus
 
 ## Cost estimate
 
-[AWS Pricing Calculator: 200 customers, month 13+, no KMS](https://calculator.aws/#/estimate?id=7145854bf2e7032b23d62ac12e4ed543acbfb3cc). Click **Update estimate** after opening it, so the calculator recomputes at current prices.
+[AWS Pricing Calculator: 200 customers, month 13+, no KMS, 1 author, audit Direct Query](https://calculator.aws/#/estimate?id=55ea2e104669c6c5565d79a8ef7b473076be2694). Click **Update estimate** after opening it, so the calculator recomputes at current prices.
 
 | Assumption | Value |
 |---|---|
 | Customers | 200, each with 100 Kiro users |
 | Data events | 100 per user per day, 22 working days (not measured yet, OQ-1) |
 | Retention | 13 months (D5), so the figures are for month 13 onward |
-| QuickSight | 2 authors, 10 readers, operator staff only (D1) |
+| QuickSight | 1 author, no readers, operator only (D1) |
+| Audit dashboard | Direct Query, no SPICE copy (D10); 100 dashboard opens x 4 visuals a month across all customers |
 | Encryption | SSE-S3 everywhere, no KMS keys (D9) |
 
-Computed from the public AWS price list files, not read from the calculator total: about 400 USD a month. 37% of it grows with the number of users (SPICE, CloudTrail data events, Athena scans of the audit logs), so doubling the users per customer raises the total by about 39%. The largest line that does not grow with users is S3 GET requests, because the audit dataset re-reads every kept log file on each daily full refresh. CloudTrail data events are billed to each customer's own account.
+S3 request counts come from the design, not round numbers: CloudTrail delivers about one log file per 5 minutes of activity plus one digest file per hour; the sample's request counts scale its own 30-day measurement to 13 months of history; prompt-log file cadence is not measured yet (OQ-9).
+
+Computed from the public AWS price list files, not read from the calculator total: about 120 USD a month. Of that, about 54 USD (CloudTrail data events and the customer-side S3 buckets) is billed to the customers' own accounts. Half of the total grows with the number of users, so doubling the users per customer raises it by about 50%.
 
 ## Open questions
 

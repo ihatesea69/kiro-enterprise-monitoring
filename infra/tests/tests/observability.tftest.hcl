@@ -192,6 +192,10 @@ run "audit_dashboard_adds_note_when_ids_differ" {
     error_message = "Dataset reads only the audit view."
   }
   assert {
+    condition     = aws_quicksight_data_set.this.import_mode == "DIRECT_QUERY"
+    error_message = "Audit dataset is Direct Query (D10): no SPICE copy, no daily full refresh."
+  }
+  assert {
     condition     = length(aws_quicksight_dashboard.this.permissions) == 2
     error_message = "Owner plus one viewer group."
   }

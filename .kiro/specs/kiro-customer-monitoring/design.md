@@ -286,7 +286,7 @@ Nối user ID:
 - Sample ghi rằng user ID trong report là user UUID của Identity Store **[ĐÃ ĐO]** (README dòng 404).
 - Khoá nối dự kiến là phần UUID sau dấu chấm. OQ-3 sẽ xác nhận.
 
-Dashboard `Kiro Request Audit - <khách>` dựng bằng Terraform (`aws_quicksight_data_set`, `aws_quicksight_dashboard`), dataset SPICE từ view trên. `sourceIPAddress` không nằm trong view, chỉ role audit query bảng gốc khi cần (Requirement 12.5).
+Dashboard `Kiro Request Audit - <khách>` dựng bằng Terraform (`aws_quicksight_data_set`, `aws_quicksight_dashboard`), dataset Direct Query từ view trên, không nạp vào SPICE (D10). `sourceIPAddress` không nằm trong view, chỉ role audit query bảng gốc khi cần (Requirement 12.5).
 
 Không thêm tab vào dashboard của CID hay sample: `cid-cmd update` và việc chạy lại `deploy.sh` của sample dựng lại định nghĩa dashboard **[CHƯA XÁC MINH]**, nên phần sửa tay có thể bị ghi đè.
 
@@ -425,7 +425,7 @@ Lưu ý:
 - Phí CloudTrail tính cho account sở hữu trail, tức account khách. Phải ghi điều này trong báo giá.
 - Khoản dễ đội nhất là số reader QuickSight. Chỉ cấp quyền theo danh sách ở D1.
 - Không có KMS key nào (D9). Phiên bản dùng KMS cần 3 key mỗi khách. Ước lượng với 200 khách, 100 user mỗi khách, từ tháng thứ 13: 2.220 USD/tháng có KMS, 400 USD/tháng không có KMS. KMS chiếm 1.820 USD, gồm phí key có rotation và phí Decrypt khi refresh audit đọc lại file log. Nguồn: file giá công khai `awskms` ap-southeast-1 và us-east-1 (1 USD mỗi key version mỗi tháng, 0,03 USD cho 10.000 request), tính bằng script, chưa đối chiếu với tổng của calculator.
-- Không có KMS thì số user mỗi khách tăng gấp đôi làm tổng tăng khoảng 39%. Phần tăng theo user là SPICE, phí CloudTrail data event và Athena quét log audit. Số event mỗi user là giả định 100 event/ngày cho tới khi có OQ-1.
+- Không có KMS thì số user mỗi khách tăng gấp đôi làm tổng tăng khoảng 39% (2 author, 10 reader). Với 1 author, 0 reader (người vận hành yêu cầu 2026-10-29): khoảng 350 USD/tháng, gấp đôi user thì tăng khoảng 45%. Sau D10 (audit dùng Direct Query) và khi thay các số S3 tròn bằng số tính theo thiết kế: khoảng 120 USD/tháng, trong đó khoảng 54 USD do khách trả (CloudTrail data event và S3 phía khách), gấp đôi user thì tăng khoảng 50%. Phần tăng theo user là SPICE, phí CloudTrail data event và Athena quét log audit. Số event mỗi user là giả định 100 event/ngày cho tới khi có OQ-1.
 
 ## 10. Quyết định cần chốt
 
@@ -440,6 +440,7 @@ Lưu ý:
 | D7 | Account dùng để đo OQ-1 đến OQ-4 | (a) Account trung tâm có user Kiro. (b) Account khách | **(a)** nếu khảo sát thấy bên vận hành có user Kiro, để không tạo resource thử trên account khách | (a) nếu task 2.3 thấy account trung tâm có user Kiro, ngược lại (b). 2026-10-29, theo đề xuất (người vận hành: "làm tất cả") |
 | D8 | Bật identity mapping | (a) Có. (b) Không | **(a)**, vì README sample ghi cột email trong report thường trống, nếu tắt thì dashboard chỉ hiện GUID. Cần khách đồng ý cho chuyển tên và email | (a) Có, kèm văn bản đồng ý của khách cho tên và email. 2026-10-29, theo đề xuất (người vận hành: "làm tất cả") |
 | D9 | Mã hoá 3 bucket do dự án tạo (CloudTrail, prompt log, identity map) | (a) SSE-KMS, mỗi khách 3 key. (b) SSE-S3 | Không có đề xuất trước; người vận hành chốt sau khi xem chi phí ở mục 9. Đánh đổi của (b): ai có `s3:GetObject` trên bucket là đọc được, không còn lớp `kms:Decrypt` thứ hai, và không có log CloudTrail của KMS cho mỗi lần đọc. Phần còn lại giữ nguyên: Block Public Access, chặn kết nối không TLS, bucket policy và role tối thiểu | (b) SSE-S3. 2026-10-29, người vận hành: "Bỏ KMS trong code cả 3 bucket". Bucket identity map nằm trong sample, nên cần bản vá P4 |
+| D10 | Dataset của dashboard audit | (a) SPICE, refresh toàn bộ mỗi ngày. (b) SPICE, refresh tăng dần. (c) Direct Query | Không có đề xuất trước. (a) đọc lại toàn bộ 13 tháng log mỗi ngày: với 200 khách là khoảng 206 triệu GET mỗi tháng, cộng 239 GB SPICE. (b) chưa xác minh được với dataset custom SQL. Đánh đổi của (c): mỗi lần mở dashboard là chạy Athena, chậm hơn, và chi phí đi theo số lần mở | (c) Direct Query. 2026-10-29, người vận hành chọn ("Direct Query (100 lần mở dashboard x 4 visual mỗi tháng) đi") |
 
 ## 11. Câu hỏi mở
 

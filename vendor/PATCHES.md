@@ -56,6 +56,31 @@ Added 2026-10-29. The operator chose SSE-S3 for every bucket this project create
 
 Diff size against `d73fc39`, tests excluded: 6 files, 63 insertions, 68 deletions. P4 alone: 3 files, 16 insertions, 59 deletions.
 
+### P5. Optional permissions boundary on the roles the sample creates
+
+Added 2026-11-02. The first real deploy into the observability account failed on `NormalizerLambdaRole`: an identity policy in that account denies `iam:CreateRole` unless the request sets one specific permissions boundary.
+
+- `cfn/01-data-layer.yaml` and `cfn/03-identity-mapping.yaml`: new parameter `PermissionsBoundaryArn`, default empty, pattern `^$|^arn:aws[a-z-]*:iam::[0-9]{12}:policy/.+`. `NormalizerLambdaRole` and `IdentityMapLambdaRole` get `PermissionsBoundary: !If [HasPermissionsBoundary, !Ref PermissionsBoundaryArn, !Ref AWS::NoValue]`. These are the only `AWS::IAM::Role` resources in the three templates.
+- `scripts/deploy.sh`: new env var `PERMISSIONS_BOUNDARY_ARN`, default empty, passed to both data-layer deploys and the identity-map deploy. Not passed to the QuickSight stack, which creates no role.
+- Empty value keeps upstream behaviour: `AWS::NoValue` drops the property.
+
+### P6. Projection range of the report tables (S3 LIST cost)
+
+Added 2026-11-02. Upstream projected `export_date` of `report_facts_raw` and `report_models_raw` over `2020-01-01,NOW+1YEARS`. Athena lists one S3 prefix per projected day on every query without an `export_date` filter, empty prefix or not, and the views have no such filter. That is about 2,860 LIST per table read on each of the 8 daily SPICE refreshes and the identity-map query, growing by 365 a year. A sibling project paid for the same pattern (a 2024-2030 range refreshed every 15 minutes).
+
+- `scripts/build_views.py`: `report_tables_ddl()` takes `projection_start` and `projection_end` (defaults are the upstream values, so callers and tests that pass three arguments are unchanged). Both are validated against `yyyy-MM-dd` or `NOW[+-]<n><DAYS|WEEKS|MONTHS|YEARS>`. New CLI flags `--projection-start` and `--projection-end`.
+- `scripts/deploy.sh`: `PROJECTION_START` is **required**, with no default; the script stops before any AWS call if it is unset or malformed. `PROJECTION_END` defaults to `NOW`. Both are passed to the two `build_views.py` calls.
+- Use the day the Kiro report was enabled as the start (Kiro does not backfill earlier days). After 13 months (D5) switch to `NOW-13MONTHS` to cap the range at about 396 days.
+
+### P7. Scoped Athena inline policy for QuickSight
+
+Added 2026-11-02. Upstream relies on the account-wide managed policy `AWSQuicksightAthenaAccess` on the shared QuickSight service role. Another project's Terraform in the same account owns an `aws_iam_role_policy_attachment` for that policy and detached it on destroy (CloudTrail, 2026-11-02 06:30:49 UTC), so every SPICE refresh here failed with `athena:StartQueryExecution` denied.
+
+- New `scripts/grant_quicksight_athena.py`: writes inline policy `<STACK_PREFIX>-QuickSightAthenaAccess`. Athena query actions only on this deployment's workgroup, catalog metadata on `AwsDataCatalog`, three list actions on `*`, Glue read only on this deployment's database and its tables, `lakeformation:GetDataAccess`. No write action. Idempotent: prints `[OK] ... already matches` and exits 0 when the live policy equals the rendered one.
+- `scripts/deploy.sh` step 4c runs it with `--apply` before the QuickSight stack. Step 4b (the managed-policy check) is unchanged, so the managed policy is still attached when missing.
+- `scripts/teardown.sh` deletes only `<STACK_PREFIX>-QuickSightAthenaAccess`; it never detaches the shared managed policy.
+- Measured on the first customer: with only this inline policy (managed policy detached), a SPICE ingestion COMPLETED. IAM policy simulator on the live document: 6/6 decisions as expected (own workgroup and database allowed; workgroup `primary`, another database, and `glue:DeleteTable` denied).
+
 ## Tests
 
 `tests/test_crossaccount_patches.py` has 13 tests for P1-P3. Each patch is tested with its new input both set and empty. `tests/test_no_kms_patch.py` has 7 tests for P4.
@@ -65,10 +90,16 @@ Diff size against `d73fc39`, tests excluded: 6 files, 63 insertions, 68 deletion
 | Upstream, before patching | 145 | 134 | 10 | 1 |
 | After P1-P3 | 158 | 147 | 10 | 1 |
 | After P1-P4 | 165 | 154 | 10 | 1 |
+| After P1-P5 | 170 | 159 | 10 | 1 |
+| After P1-P6 | 181 | 170 | 10 | 1 |
+| After P1-P7 | 189 | 178 | 10 | 1 |
 
 - The 10 errors are the same in both runs, all in `test_versioning.TestTagMerge`. That test starts `bash` through Python `subprocess`, which on this Windows machine resolves to the WSL launcher in System32 instead of Git Bash and fails with a WSL RPC error. They do not touch any patched code path.
 - Against the five upstream files restored byte-exact, 9 of the 13 new tests fail. The 4 that pass on upstream guard upstream behaviour that must survive (one `Conditions` block, the same-account `FAIL`, no `ExternalId` when the variable is empty or unset).
 - P4: against the three upstream files restored byte-exact, all 7 P4 tests fail.
+- P6: `tests/test_projection_range_patch.py` has 11 tests, 3 of them run the `deploy.sh` guard block under Git Bash. Against the tree before P6, 10 fail; the one that passes checks that `report_tables_ddl()` keeps the upstream default for three-argument callers.
+- The 10 `TestTagMerge` errors have a found cause: `subprocess.run(["bash", ...])` on Windows searches System32 before `PATH`, so it starts the WSL launcher even when Git Bash is first on `PATH`. The P6 guard tests call the path `shutil.which("bash")` returns.
+- P5: `tests/test_permissions_boundary_patch.py` has 5 tests. Against the tree before P5 (`git archive HEAD`), all 5 fail. `cfn-lint` on all three templates after P5: 0 findings.
 - `cfn-lint` 1.52.0 on all three templates: 0 findings before and after, including after P4.
 - `bash -n` on `deploy.sh`, `preflight.sh` and `teardown.sh`: 0 errors after patching.
 - `preflight.sh` run under Git Bash with a stub `aws` CLI: cross-account prints `[WARN] report bucket belongs to account ...` and makes 0 list calls on the bucket; same-account still prints `[FAIL] user_report not found` after 1 list call.

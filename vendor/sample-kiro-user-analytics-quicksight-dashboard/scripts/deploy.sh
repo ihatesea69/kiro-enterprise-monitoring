@@ -14,6 +14,13 @@
 #   KIRO_SOURCE_ACCOUNT_ID - default "" (this account). PATCH P1: account that
 #                        writes the Kiro report, when the bucket is in another
 #                        account. Set KIRO_LOGS_PREFIX explicitly in that case.
+#   PERMISSIONS_BOUNDARY_ARN - default "". PATCH P5: managed policy ARN set as
+#                        the permissions boundary of the normalizer and
+#                        identity-map roles.
+#   PROJECTION_START   - REQUIRED. PATCH P6: first export_date Athena projects,
+#                        the day the Kiro report was enabled (yyyy-MM-dd) or a
+#                        rolling NOW-<n>MONTHS. deploy.sh stops if unset.
+#   PROJECTION_END     - default NOW. PATCH P6.
 #   QS_IAM_ROLE_NAME   - default aws-quicksight-service-role-v0 (the QS-managed
 #                        default). Override if your account is configured to
 #                        use an existing role under QuickSight -> Manage
@@ -80,6 +87,22 @@ IDC_REGION="${IDC_REGION:-}"
 IDC_ROLE_ARN="${IDC_ROLE_ARN:-}"
 IDC_EXTERNAL_ID="${IDC_EXTERNAL_ID:-}"
 KIRO_SOURCE_ACCOUNT_ID="${KIRO_SOURCE_ACCOUNT_ID:-}"
+# PATCH P5 (kiro-enterprise-monitoring): permissions boundary for the roles
+# this script creates, for accounts that deny iam:CreateRole without one.
+PERMISSIONS_BOUNDARY_ARN="${PERMISSIONS_BOUNDARY_ARN:-}"
+# PATCH P6 (kiro-enterprise-monitoring): projection range of report_facts_raw /
+# report_models_raw. Every projected day is one S3 prefix Athena lists on each
+# query, so the upstream 2020-01-01,NOW+1YEARS costs ~2,860 LIST per table read
+# on every SPICE refresh. This repo REQUIRES the start date (the day the Kiro
+# report was enabled); there is no silent fallback to the wide range.
+PROJECTION_START="${PROJECTION_START:-}"
+PROJECTION_END="${PROJECTION_END:-NOW}"
+if [[ ! "${PROJECTION_START}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$|^NOW-[0-9]{1,4}(DAYS|WEEKS|MONTHS|YEARS)$ ]]; then
+    echo ">> ERROR: set PROJECTION_START to the day the Kiro report was enabled (yyyy-MM-dd)," >&2
+    echo "   or to a rolling window such as NOW-13MONTHS. Got: '${PROJECTION_START}'." >&2
+    echo "   Each projected day is an S3 prefix listed on every Athena query (patch P6)." >&2
+    exit 1
+fi
 IDENTITY_MAP_REFRESH_SCHEDULE="${IDENTITY_MAP_REFRESH_SCHEDULE:-cron(30 3 * * ? *)}"
 ALARM_EMAIL="${ALARM_EMAIL:-}"
 LOG_RETENTION_DAYS="${LOG_RETENTION_DAYS:-30}"
@@ -330,7 +353,8 @@ aws cloudformation deploy \
         "WorkgroupName=${WORKGROUP_NAME}" \
         "NormalizerLambdaCodeS3Key=${NRM_CODE_KEY}" \
         "AlarmEmail=${ALARM_EMAIL}" \
-        "SourceAccountId=${KIRO_SOURCE_ACCOUNT_ID}"
+        "SourceAccountId=${KIRO_SOURCE_ACCOUNT_ID}" \
+        "PermissionsBoundaryArn=${PERMISSIONS_BOUNDARY_ARN}"
 
 if [[ -z "${NRM_CODE_KEY}" ]]; then
     echo ">> Staging normalizer zip (first deploy) and re-deploying ${DATA_STACK}"
@@ -351,7 +375,8 @@ if [[ -z "${NRM_CODE_KEY}" ]]; then
             "WorkgroupName=${WORKGROUP_NAME}" \
             "NormalizerLambdaCodeS3Key=${NRM_KEY}" \
             "AlarmEmail=${ALARM_EMAIL}" \
-            "SourceAccountId=${KIRO_SOURCE_ACCOUNT_ID}"
+            "SourceAccountId=${KIRO_SOURCE_ACCOUNT_ID}" \
+            "PermissionsBoundaryArn=${PERMISSIONS_BOUNDARY_ARN}"
 fi
 
 DATABASE="$(aws cloudformation describe-stacks --region "${REGION}" --stack-name "${DATA_STACK}" \
@@ -471,6 +496,8 @@ python3 "${ROOT}/scripts/build_views.py" \
     --workgroup "${WORKGROUP}" \
     --region "${REGION}" \
     --normalized-bucket "${RESULTS_BUCKET}" \
+    --projection-start "${PROJECTION_START}" \
+    --projection-end "${PROJECTION_END}" \
     --tables-only
 
 # 2b) Identity mapping (optional). Must run AFTER the report tables exist (so
@@ -521,7 +548,8 @@ if [[ "${IDENTITY_MAPPING}" == "true" ]]; then
             "AthenaResultsBucket=${RESULTS_BUCKET}" \
             "KiroLogsBucket=${KIRO_LOGS_BUCKET}" \
             "LambdaCodeS3Key=${LAMBDA_KEY}" \
-            "RefreshSchedule=${IDENTITY_MAP_REFRESH_SCHEDULE}"
+            "RefreshSchedule=${IDENTITY_MAP_REFRESH_SCHEDULE}" \
+            "PermissionsBoundaryArn=${PERMISSIONS_BOUNDARY_ARN}"
 
     IDMAP_BUCKET="$(aws cloudformation describe-stacks --region "${REGION}" --stack-name "${IDMAP_STACK}" \
         --query "Stacks[0].Outputs[?OutputKey=='IdentityMapBucketName'].OutputValue" --output text)"
@@ -584,6 +612,8 @@ python3 "${ROOT}/scripts/build_views.py" \
     --workgroup "${WORKGROUP}" \
     --region "${REGION}" \
     --normalized-bucket "${RESULTS_BUCKET}" \
+    --projection-start "${PROJECTION_START}" \
+    --projection-end "${PROJECTION_END}" \
     "${VIEW_FLAGS[@]+"${VIEW_FLAGS[@]}"}"
 
 # 4) QuickSight S3 access. The QS service role needs ListBucket/GetObject on
@@ -719,6 +749,18 @@ else
         exit 1
     fi
 fi
+
+# 4c) PATCH P7 (kiro-enterprise-monitoring): scoped Athena + Glue inline policy
+# on the QS role, so this dashboard keeps working when another project detaches
+# the shared AWSQuicksightAthenaAccess (seen 2026-11-02). Applied always: the
+# policy grants only this deployment's workgroup and database.
+echo ">> Granting QuickSight scoped Athena access (${STACK_PREFIX}-QuickSightAthenaAccess)"
+python3 "${ROOT}/scripts/grant_quicksight_athena.py" --apply \
+    --region "${REGION}" \
+    --role-name "${QS_IAM_ROLE_NAME}" \
+    --policy-name "${STACK_PREFIX}-QuickSightAthenaAccess" \
+    --workgroup "${WORKGROUP}" \
+    --database "${DATABASE}"
 
 # 5) QuickSight DataSource + DataSets.
 # CloudFormation refuses to update a stack that's stuck in ROLLBACK_COMPLETE
