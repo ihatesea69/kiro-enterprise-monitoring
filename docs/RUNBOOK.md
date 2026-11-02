@@ -2,7 +2,7 @@
 
 Các lệnh dưới đây giả định đang đứng ở thư mục gốc của repo. `<slug>` là tên khách trong `customers/<slug>/config.json`. Mỗi `terraform apply` là một task **[XÁC NHẬN]**: người vận hành đồng ý cho đúng lần chạy đó.
 
-Trên máy này, policy của Kiro Crew chặn agent chạy `aws cloudformation deploy` và mọi lệnh xoá. Các bước đó người vận hành tự chạy trong terminal hoặc CloudShell.
+Đo ngày 2026-11-02: policy của Kiro Crew trên máy này không còn chặn `aws cloudformation deploy` (agent đã deploy stack của sample cho khách đầu tiên). Trước khi giao bước CloudFormation cho người vận hành, thử bằng một lệnh vô hại (template không tồn tại) để biết policy hiện tại.
 
 ## 1. Thêm khách mới
 
@@ -16,7 +16,7 @@ Trên máy này, policy của Kiro Crew chặn agent chạy `aws cloudformation 
 | 6 | 4.3 | Người vận hành | D2 = chỉ Kiro: root `infra/roots/payer`. D2 = toàn bộ: stack `CID-DataExports-Source` |
 | 7 | 4.8-4.9 | Agent | Root `infra/roots/customer` với `report_bucket` và `report_existing_policy_file` |
 | 8 | 5.6 | Agent | Cùng root, `enable_idc_read_role = true` (khi D8 = có) |
-| 9 | 5.7 | Agent, người vận hành | `python tools/package_sample.py`, tải zip lên CloudShell, chạy `deploy.sh` theo docstring của script |
+| 9 | 5.7 | Agent, người vận hành | `python tools/package_sample.py`, tải zip lên CloudShell, chạy `deploy.sh` theo docstring của script. Bắt buộc `PROJECTION_START` = ngày bật report Kiro (bản vá P6); thiếu thì script dừng |
 | 10 | 5.8 | Agent | Thêm role normalizer vào `report_reader_role_arns`, đặt `identity_map_role_arn`, apply lại root customer |
 | 11 | 6.x | Agent | Chỉ khi OQ-1 có event: root `infra/roots/observability-customer` với `enable_trail_bucket = true`, rồi root customer với `enable_trail = true` |
 | 12 | 7.x | Agent | Root customer với `enable_prompt_logs = true`. D4 = có thì thêm `enable_prompt_metadata` ở cả hai root |

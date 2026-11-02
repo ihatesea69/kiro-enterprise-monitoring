@@ -13,6 +13,7 @@ Then, in CloudShell (ap-southeast-1):
     unzip kiro-sample-<sha>.zip && cd sample-kiro-user-analytics-quicksight-dashboard
     STACK_PREFIX=kiro-<slug> KIRO_LOGS_BUCKET=<bucket> KIRO_LOGS_PREFIX=kiro/ \
     KIRO_SOURCE_ACCOUNT_ID=<kiro account> AWS_REGION=ap-southeast-1 QS_PRINCIPAL_ARN=<arn> \
+    PROJECTION_START=<yyyy-MM-dd the Kiro report was enabled> \
     [IDENTITY_MAPPING=true IDENTITY_STORE_ID=<d-...> IDC_REGION=<r> IDC_ROLE_ARN=<arn> IDC_EXTERNAL_ID=<id>] \
     scripts/deploy.sh
 """

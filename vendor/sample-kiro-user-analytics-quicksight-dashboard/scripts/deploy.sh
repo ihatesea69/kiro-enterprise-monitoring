@@ -17,6 +17,10 @@
 #   PERMISSIONS_BOUNDARY_ARN - default "". PATCH P5: managed policy ARN set as
 #                        the permissions boundary of the normalizer and
 #                        identity-map roles.
+#   PROJECTION_START   - REQUIRED. PATCH P6: first export_date Athena projects,
+#                        the day the Kiro report was enabled (yyyy-MM-dd) or a
+#                        rolling NOW-<n>MONTHS. deploy.sh stops if unset.
+#   PROJECTION_END     - default NOW. PATCH P6.
 #   QS_IAM_ROLE_NAME   - default aws-quicksight-service-role-v0 (the QS-managed
 #                        default). Override if your account is configured to
 #                        use an existing role under QuickSight -> Manage
@@ -86,6 +90,19 @@ KIRO_SOURCE_ACCOUNT_ID="${KIRO_SOURCE_ACCOUNT_ID:-}"
 # PATCH P5 (kiro-enterprise-monitoring): permissions boundary for the roles
 # this script creates, for accounts that deny iam:CreateRole without one.
 PERMISSIONS_BOUNDARY_ARN="${PERMISSIONS_BOUNDARY_ARN:-}"
+# PATCH P6 (kiro-enterprise-monitoring): projection range of report_facts_raw /
+# report_models_raw. Every projected day is one S3 prefix Athena lists on each
+# query, so the upstream 2020-01-01,NOW+1YEARS costs ~2,860 LIST per table read
+# on every SPICE refresh. This repo REQUIRES the start date (the day the Kiro
+# report was enabled); there is no silent fallback to the wide range.
+PROJECTION_START="${PROJECTION_START:-}"
+PROJECTION_END="${PROJECTION_END:-NOW}"
+if [[ ! "${PROJECTION_START}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$|^NOW-[0-9]{1,4}(DAYS|WEEKS|MONTHS|YEARS)$ ]]; then
+    echo ">> ERROR: set PROJECTION_START to the day the Kiro report was enabled (yyyy-MM-dd)," >&2
+    echo "   or to a rolling window such as NOW-13MONTHS. Got: '${PROJECTION_START}'." >&2
+    echo "   Each projected day is an S3 prefix listed on every Athena query (patch P6)." >&2
+    exit 1
+fi
 IDENTITY_MAP_REFRESH_SCHEDULE="${IDENTITY_MAP_REFRESH_SCHEDULE:-cron(30 3 * * ? *)}"
 ALARM_EMAIL="${ALARM_EMAIL:-}"
 LOG_RETENTION_DAYS="${LOG_RETENTION_DAYS:-30}"
@@ -479,6 +496,8 @@ python3 "${ROOT}/scripts/build_views.py" \
     --workgroup "${WORKGROUP}" \
     --region "${REGION}" \
     --normalized-bucket "${RESULTS_BUCKET}" \
+    --projection-start "${PROJECTION_START}" \
+    --projection-end "${PROJECTION_END}" \
     --tables-only
 
 # 2b) Identity mapping (optional). Must run AFTER the report tables exist (so
@@ -593,6 +612,8 @@ python3 "${ROOT}/scripts/build_views.py" \
     --workgroup "${WORKGROUP}" \
     --region "${REGION}" \
     --normalized-bucket "${RESULTS_BUCKET}" \
+    --projection-start "${PROJECTION_START}" \
+    --projection-end "${PROJECTION_END}" \
     "${VIEW_FLAGS[@]+"${VIEW_FLAGS[@]}"}"
 
 # 4) QuickSight S3 access. The QS service role needs ListBucket/GetObject on

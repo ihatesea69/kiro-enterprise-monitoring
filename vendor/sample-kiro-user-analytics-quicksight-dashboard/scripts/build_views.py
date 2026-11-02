@@ -80,11 +80,31 @@ def _validate_identifier(value: str, kind: str) -> str:
 # drift). Dedup lives in SQL (where it scales to any history size) while the
 # header-binding lives in the Lambda (the one thing Athena CSV cannot do).
 
-def report_tables_ddl(database: str, bucket: str, prefix: str) -> list[str]:
+# PATCH P6 (kiro-enterprise-monitoring): configurable projection range.
+# Without a filter on export_date Athena enumerates every projected day and
+# lists its S3 prefix, empty or not. The upstream range 2020-01-01,NOW+1YEARS
+# is ~2,860 prefixes per table read and grows by 365 a year, on every SPICE
+# refresh. Start at the day the Kiro report was enabled; end at NOW.
+DEFAULT_PROJECTION_START = "2020-01-01"
+DEFAULT_PROJECTION_END = "NOW+1YEARS"
+_PROJ_BOUND_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}|NOW([+-][0-9]{1,4}(DAYS|WEEKS|MONTHS|YEARS))?)$")
+
+
+def _validate_projection_bound(value: str, kind: str) -> str:
+    if not _PROJ_BOUND_RE.match(value):
+        raise ValueError(f"Invalid projection {kind}: {value!r} (yyyy-MM-dd or NOW[+-]<n><DAYS|WEEKS|MONTHS|YEARS>)")
+    return value
+
+
+def report_tables_ddl(database: str, bucket: str, prefix: str,
+                      projection_start: str = DEFAULT_PROJECTION_START,
+                      projection_end: str = DEFAULT_PROJECTION_END) -> list[str]:
     """DROP + CREATE for the report_facts/report_models dedup views and their
     underlying partitioned raw external tables. Returns statements in apply
     order (drop views before tables; create tables before views)."""
     _validate_identifier(database, "database")
+    _validate_projection_bound(projection_start, "start")  # PATCH P6
+    _validate_projection_bound(projection_end, "end")  # PATCH P6
     if not _S3_NAME_RE.match(bucket):
         raise ValueError(f"Invalid normalized-data bucket name: {bucket!r}")
     clean_prefix = prefix.strip("/")
@@ -100,7 +120,7 @@ def report_tables_ddl(database: str, bucket: str, prefix: str) -> list[str]:
         "    'projection.enabled' = 'true',\n"
         "    'projection.export_date.type' = 'date',\n"
         "    'projection.export_date.format' = 'yyyy-MM-dd',\n"
-        "    'projection.export_date.range' = '2020-01-01,NOW+1YEARS',\n"
+        f"    'projection.export_date.range' = '{projection_start},{projection_end}',\n"  # PATCH P6
         "    'projection.export_date.interval' = '1',\n"
         "    'projection.export_date.interval.unit' = 'DAYS',\n"
         "    'storage.location.template' = '{loc}export_date=${{export_date}}/',\n"
@@ -561,6 +581,19 @@ def main() -> int:
         help="S3 key prefix (directory) of the identity-map CSV within "
              "--identity-map-bucket. Default: identity-map",
     )
+    # PATCH P6 (kiro-enterprise-monitoring)
+    p.add_argument(
+        "--projection-start",
+        default=DEFAULT_PROJECTION_START,
+        help="First export_date Athena projects. Set to the day the Kiro report "
+             "was enabled: every earlier day is an empty S3 prefix listed on "
+             f"each query. Default (upstream): {DEFAULT_PROJECTION_START}",
+    )
+    p.add_argument(
+        "--projection-end",
+        default=DEFAULT_PROJECTION_END,
+        help=f"Last export_date Athena projects. NOW is enough. Default (upstream): {DEFAULT_PROJECTION_END}",
+    )
     args = p.parse_args()
 
     identity_enabled = bool(args.identity_map_bucket)
@@ -584,7 +617,8 @@ def main() -> int:
     # CSVs the normalize_report_lambda lands) must exist BEFORE the views that
     # read them, so create them first.
     for stmt in report_tables_ddl(args.database, args.normalized_bucket,
-                                  args.normalized_prefix):
+                                  args.normalized_prefix,
+                                  args.projection_start, args.projection_end):  # PATCH P6
         run_athena(athena, stmt, args.workgroup, args.database)
     print("Created report_facts / report_models external tables.", file=sys.stderr)
 
