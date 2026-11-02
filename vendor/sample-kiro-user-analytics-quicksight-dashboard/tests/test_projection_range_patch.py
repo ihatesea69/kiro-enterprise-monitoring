@@ -66,8 +66,8 @@ class TestP6Deploy(unittest.TestCase):
         self.assertNotRegex(DEPLOY, r"--projection-start\s+[\"']?2020")
 
 
-@unittest.skipUnless(shutil.which("bash") and "System32" not in (shutil.which("bash") or ""),
-                     "needs a real bash (not the WSL launcher)")
+@unittest.skipUnless(shutil.which("bash") and "system32" not in (shutil.which("bash") or "").lower(),
+                     "needs a real bash (not the WSL launcher in System32); put Git Bash first on PATH")
 class TestP6DeployGuardRuns(unittest.TestCase):
     """Run only the P6 guard block, cut out of deploy.sh, under bash."""
 

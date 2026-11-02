@@ -202,5 +202,12 @@ python3 "${ROOT}/scripts/grant_quicksight_s3.py" --revoke \
     --buckets "${REVOKE_BUCKETS[@]}" 2>&1 | sed 's/^/   /' || \
     echo "   skipped (custom QS service role or policy not found)"
 
+# PATCH P7 (kiro-enterprise-monitoring): remove the scoped Athena inline policy
+# deploy.sh wrote. Never touches the shared AWSQuicksightAthenaAccess attachment.
+echo ">> Removing ${STACK_PREFIX}-QuickSightAthenaAccess from ${QS_IAM_ROLE_NAME}"
+aws iam delete-role-policy --role-name "${QS_IAM_ROLE_NAME}" \
+    --policy-name "${STACK_PREFIX}-QuickSightAthenaAccess" 2>/dev/null \
+    && echo "   removed" || echo "   skipped (not found)"
+
 echo
 echo ">> Done. Untouched: your Kiro logs S3 bucket and any data inside it."

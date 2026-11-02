@@ -72,6 +72,15 @@ Added 2026-11-02. Upstream projected `export_date` of `report_facts_raw` and `re
 - `scripts/deploy.sh`: `PROJECTION_START` is **required**, with no default; the script stops before any AWS call if it is unset or malformed. `PROJECTION_END` defaults to `NOW`. Both are passed to the two `build_views.py` calls.
 - Use the day the Kiro report was enabled as the start (Kiro does not backfill earlier days). After 13 months (D5) switch to `NOW-13MONTHS` to cap the range at about 396 days.
 
+### P7. Scoped Athena inline policy for QuickSight
+
+Added 2026-11-02. Upstream relies on the account-wide managed policy `AWSQuicksightAthenaAccess` on the shared QuickSight service role. Another project's Terraform in the same account owns an `aws_iam_role_policy_attachment` for that policy and detached it on destroy (CloudTrail, 2026-11-02 06:30:49 UTC), so every SPICE refresh here failed with `athena:StartQueryExecution` denied.
+
+- New `scripts/grant_quicksight_athena.py`: writes inline policy `<STACK_PREFIX>-QuickSightAthenaAccess`. Athena query actions only on this deployment's workgroup, catalog metadata on `AwsDataCatalog`, three list actions on `*`, Glue read only on this deployment's database and its tables, `lakeformation:GetDataAccess`. No write action. Idempotent: prints `[OK] ... already matches` and exits 0 when the live policy equals the rendered one.
+- `scripts/deploy.sh` step 4c runs it with `--apply` before the QuickSight stack. Step 4b (the managed-policy check) is unchanged, so the managed policy is still attached when missing.
+- `scripts/teardown.sh` deletes only `<STACK_PREFIX>-QuickSightAthenaAccess`; it never detaches the shared managed policy.
+- Measured on the first customer: with only this inline policy (managed policy detached), a SPICE ingestion COMPLETED. IAM policy simulator on the live document: 6/6 decisions as expected (own workgroup and database allowed; workgroup `primary`, another database, and `glue:DeleteTable` denied).
+
 ## Tests
 
 `tests/test_crossaccount_patches.py` has 13 tests for P1-P3. Each patch is tested with its new input both set and empty. `tests/test_no_kms_patch.py` has 7 tests for P4.
@@ -83,6 +92,7 @@ Added 2026-11-02. Upstream projected `export_date` of `report_facts_raw` and `re
 | After P1-P4 | 165 | 154 | 10 | 1 |
 | After P1-P5 | 170 | 159 | 10 | 1 |
 | After P1-P6 | 181 | 170 | 10 | 1 |
+| After P1-P7 | 189 | 178 | 10 | 1 |
 
 - The 10 errors are the same in both runs, all in `test_versioning.TestTagMerge`. That test starts `bash` through Python `subprocess`, which on this Windows machine resolves to the WSL launcher in System32 instead of Git Bash and fails with a WSL RPC error. They do not touch any patched code path.
 - Against the five upstream files restored byte-exact, 9 of the 13 new tests fail. The 4 that pass on upstream guard upstream behaviour that must survive (one `Conditions` block, the same-account `FAIL`, no `ExternalId` when the variable is empty or unset).

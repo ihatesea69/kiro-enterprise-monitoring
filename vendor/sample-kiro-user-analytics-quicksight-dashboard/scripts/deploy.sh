@@ -750,6 +750,18 @@ else
     fi
 fi
 
+# 4c) PATCH P7 (kiro-enterprise-monitoring): scoped Athena + Glue inline policy
+# on the QS role, so this dashboard keeps working when another project detaches
+# the shared AWSQuicksightAthenaAccess (seen 2026-11-02). Applied always: the
+# policy grants only this deployment's workgroup and database.
+echo ">> Granting QuickSight scoped Athena access (${STACK_PREFIX}-QuickSightAthenaAccess)"
+python3 "${ROOT}/scripts/grant_quicksight_athena.py" --apply \
+    --region "${REGION}" \
+    --role-name "${QS_IAM_ROLE_NAME}" \
+    --policy-name "${STACK_PREFIX}-QuickSightAthenaAccess" \
+    --workgroup "${WORKGROUP}" \
+    --database "${DATABASE}"
+
 # 5) QuickSight DataSource + DataSets.
 # CloudFormation refuses to update a stack that's stuck in ROLLBACK_COMPLETE
 # (the state a stack lands in when its first create fails). Detect it and
