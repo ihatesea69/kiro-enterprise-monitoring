@@ -1,0 +1,14 @@
+# Copy to customers/<slug>/<account-slug>.tfvars (ignored by git). Never commit real IDs.
+account_id = "111122223333"
+slug       = "kiro01"
+profile    = "payer-profile"
+
+# Leave empty for the first apply; fill in the dashboard account's QuickSight
+# role when the pilot is ready to read.
+consumer_role_arns = []
+
+# Only when the account has a boundary policy (patch P5):
+# permissions_boundary_arn = "arn:aws:iam::111122223333:policy/your-boundary"
+
+# The management account itself uses its own profile instead of a role:
+# assume_role_name = null

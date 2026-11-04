@@ -99,12 +99,13 @@ The full list (OQ-1 to OQ-13) and the decisions still open (D1 to D8) are in [`d
 | `tools/build_audit_views.py` | Renders the audit view. Never selects source IP, request payloads or the full user agent |
 | `tools/reconcile.py` | Checks dashboard numbers against a second source (Cost Explorer, CID vs sample) and writes the customer baseline |
 | `tools/package_sample.py` | Reproducible zip of the patched sample for CloudShell, with a SHA256 file |
-| `infra/customer/` | Customer-side modules: report bucket policy, Identity Center read role, data-event trail, prompt-log bucket, prompt metadata Lambda, Kiro-only CUR export |
+| `infra/customer/` | Customer-side modules: data lake per Kiro account (report bucket, backup, normalizer, Glue tables), report bucket policy, Identity Center read role, data-event trail, prompt-log bucket, prompt metadata Lambda, Kiro-only CUR export |
 | `infra/observability/` | Observability-side modules: trail bucket, prompt metadata bucket, audit dashboard, freshness check |
-| `infra/roots/` | Roots per account (`customer`, `payer`, `observability-customer`, `shared`), each with `allowed_account_ids` and a `terraform.tfvars.example` |
+| `infra/roots/` | Roots per account (`customer`, `member-account`, `payer`, `observability-customer`, `shared`), each with `allowed_account_ids` and a `terraform.tfvars.example` |
 | `infra/experiments/oq/` | Temporary resources that measure the open questions |
 | `infra/tests/` | `terraform test` for every module and root, against mocked providers |
 | `docs/RUNBOOK.md`, `docs/TEARDOWN.md` | Operating and removal procedures (Vietnamese) |
+| `docs/MEMBER-ACCOUNTS.md` | Customer-side data plane per Kiro account: what it creates, pilot steps, adopting an existing report bucket, backup check (English) |
 | `infra/observability/freshness/` | Terraform module and Lambda for the daily freshness check and SNS alert |
 | `customers/_template/` | Empty customer config. Every other folder under `customers/` is gitignored |
 | `docs/customer-config.md`, `docs/data-inventory-template.md` | Config field rules, and the data inventory the customer signs per layer |
