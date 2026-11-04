@@ -14,10 +14,10 @@ Sơ đồ phụ thuộc chính:
 0 -> 1 -> 2 -> 3 (đo OQ) --> 6 (lớp 4) --> 8 (nối + audit)
           2 -> 4 (lớp 1+2) --+            /
           2 -> 5 (lớp 3) ----+-----------+
-          3 -> 7 (lớp 5) ----------------+
+          7 (lớp 5, tự đo OQ-9) ----------+
           4,5 -> 9 (giám sát) -> 10 (bàn giao)
 ```
-Task 4 và 5 chạy song song được sau task 2. Task 6, 7 và 8 phải chờ kết quả của task 3.
+Task 4 và 5 chạy song song được sau task 2. Task 6 và 8 phải chờ kết quả của task 3. Từ 2026-11-04 task 7 không chờ task 3: pilot lớp 5 tự đo OQ-9 trên bucket thật (task 7.3).
 
 ---
 
@@ -319,36 +319,51 @@ Task 4 và 5 chạy song song được sau task 2. Task 6, 7 và 8 phải chờ 
     - _Requirements: 16.1, 17.1_
 
 - [ ] 7. Lớp 5: prompt logging
-  - [ ] 7.1 Viết và apply `infra/customer/prompt-logs` **[XÁC NHẬN]**
+  - Sửa ngày 2026-11-04 theo D11 và D12. Giai đoạn 1 (task 7.1 đến 7.3) chỉ lưu log, pilot ở management account của khách đầu tiên. Giai đoạn 2 là task 7.6. Phân tích bằng model nằm ngoài phạm vi.
+  - [ ] 7.1 Sửa và apply `infra/customer/prompt-logs` qua root `infra/roots/customer` **[XÁC NHẬN]**
     - Trạng thái 2026-10-29: module xong, 3 test pass, gồm điều kiện plan không chứa account trung tâm.
-    - Bucket SSE-S3 (D9), Block Public Access, chặn kết nối không TLS, lifecycle theo thời gian giữ khách chọn, bảng Athena và role `kiro-prompt-auditor` của khách. Không có principal nào của account trung tâm.
+    - Sửa code: thêm cột `modelid` vào bảng `prompt_logs` (design.md mục 3.5), kèm test.
+    - `customers/<khách>/prompt-logs.tfvars`: chỉ `enable_prompt_logs = true` và `prompt_retention_days` theo D12, mọi lớp khác để tắt. State ở `customers/<khách>/state-prompt-logs/`.
+    - Bucket SSE-S3 (D9), Block Public Access, chặn kết nối không TLS, lifecycle theo D12, bảng Athena và role `kiro-prompt-auditor` của khách. Chưa có principal nào của account trung tâm.
     - Người làm: Agent, người vận hành (xác nhận)
-    - Xong khi: plan không có ARN nào chứa `<observability-account-id>`. Apply xong.
-    - Phụ thuộc: 3.6, 1.2
-    - _Requirements: 10.1, 10.2, 10.3, 10.4_
+    - Xong khi: plan chỉ có resource của module `prompt_logs`, 0 change, 0 destroy, không có ARN nào chứa `<observability-account-id>`. Apply xong, plan lại ra "No changes".
+    - Phụ thuộc: D12
+    - _Requirements: 10.1, 10.2, 10.3, 10.4, 10.5, 10.6_
   - [ ] 7.2 Trỏ prompt logging của Kiro sang bucket mới
-    - Người làm: Khách hoặc người vận hành (Kiro console)
+    - Người làm: người vận hành (Kiro console). Ghi giờ bật theo UTC.
     - Xong khi: có file mới trong bucket sau lần chat kế tiếp. Agent chỉ đếm file, không đọc nội dung.
     - Phụ thuộc: 7.1
-  - [ ] 7.3 Chứng minh bên vận hành không đọc được
+  - [ ] 7.3 Đo file đầu tiên (OQ-9) và kiểm account trung tâm chưa đọc được
+    - Chỉ in: số file, đường dẫn đã thay số account và ID bằng ký hiệu, độ trễ từ giờ chat tới `LastModified`, tên các field có mặt, số record mỗi loại (đủ, chỉ có response, rỗng), độ dài `prompt` và `assistantResponse`. Không in giá trị field toàn văn.
     - Từ một role ở account trung tâm, thử `s3api head-object` lên một key trong bucket prompt log.
     - Người làm: Agent
-    - Xong khi: kết quả là `403`. Ghi vào `BASELINE.md`.
+    - Xong khi: OQ-9 có câu trả lời ghi trong design.md mục 11. `head-object` từ account trung tâm trả `403`. `SELECT count(*)` trên `prompt_logs` lớn hơn 0.
     - Phụ thuộc: 7.2
-    - _Requirements: 10.2_
-  - [x] 7.4 (Chỉ khi D4 = có) Viết Lambda metadata kèm test trước
+    - _Requirements: 10.5_
+  - [x] 7.4 (Chỉ khi D4 = có, không áp dụng từ D11) Viết Lambda metadata kèm test trước
     - Viết test trước: hai record mẫu từ tài liệu Kiro, một record có cấu trúc lạ. Kiểm output chỉ có khoá trong danh sách trắng (`design.md` mục 3.5), không có chuỗi con nào dài từ 8 ký tự trở lên lấy từ field toàn văn, record lạ bị bỏ, log chỉ có số đếm.
     - Người làm: Agent
     - Xong khi: tất cả test pass.
     - Phụ thuộc: 3.6
     - _Requirements: 11.1, 11.2, 11.3, 11.4, 11.5_
-  - [ ] 7.5 (Chỉ khi D4 = có) Deploy Lambda metadata và bucket nhận **[XÁC NHẬN]**
+  - [ ] 7.5 (Chỉ khi D4 = có, không làm từ D11) Deploy Lambda metadata và bucket nhận **[XÁC NHẬN]**
     - Trạng thái 2026-10-29: module hai phía xong, 4 test pass. Lambda có 9 unit test.
     - `infra/customer/prompt-metadata` và `infra/observability/prompt-metadata`.
     - Người làm: Agent, người vận hành (xác nhận)
     - Xong khi: đọc 1 object trong bucket metadata ở bên vận hành, grep các tên field toàn văn được 0 kết quả.
     - Phụ thuộc: 7.4, 7.2
     - _Requirements: 11.1, 11.2_
+  - [ ] 7.6 Giai đoạn 2: account trung tâm đọc prompt log **[XÁC NHẬN]**
+    - Lambda ở account khách chuyển prompt log sang bảng `prompt_events` trong lake `ap-southeast-1`. Quyền đọc chỉ cho role có tên trong `consumer_role_arns`. Precondition của module đổi từ "cấm mọi ARN của account trung tâm" sang "chỉ cho đúng các ARN trong danh sách". Kiểm giới hạn độ dài chuỗi của SPICE trước khi làm dataset (design.md mục 3.5).
+    - Người làm: Agent, người vận hành (xác nhận)
+    - Xong khi: role QuickSight ở account trung tâm đếm được số dòng của `prompt_events` bằng số record đếm ở account khách. Một principal không có trong danh sách bị từ chối.
+    - Phụ thuộc: 7.3
+    - _Requirements: 10.5_
+  - [ ] 7.7 Nhân ra các account khác có Kiro profile
+    - Mỗi account một bucket và một state, lặp lại 7.1 đến 7.3.
+    - Người làm: Agent, người vận hành (xác nhận và bật trên Kiro console của từng account)
+    - Xong khi: mỗi account có file đầu tiên trong bucket của chính nó.
+    - Phụ thuộc: 7.3
 
 - [ ] 8. Nối dữ liệu và dashboard audit (chỉ khi lớp 4 chạy)
   - [ ] 8.1 Viết `tools/build_audit_views.py`

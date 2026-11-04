@@ -36,7 +36,7 @@ Tiêu chí viết theo EARS: `WHEN <sự kiện> THE SYSTEM SHALL <hành vi>`, `
 
 - Coding metrics collector: phải cài plugin trên máy từng developer, nên không quản lý tập trung được.
 - Bản xuất OpenTelemetry của Kiro, sample Streamlit, dashboard có sẵn trong Kiro console.
-- Chuyển toàn văn prompt hoặc câu trả lời của khách về bên vận hành.
+- Phân tích nội dung prompt bằng model (ví dụ Amazon Bedrock) để đánh giá hiệu quả hoặc phát hiện việc riêng. Làm ở giai đoạn sau, khi đã có prompt log thật (design.md mục 3.5, giai đoạn 3).
 - Đánh giá pháp lý thay cho khách. Bên vận hành chỉ cung cấp danh mục dữ liệu kỹ thuật để bộ phận pháp lý của khách tự đánh giá.
 - Theo dõi Kiro của chính bên vận hành. Có thể tái dùng spec này sau, khi đó account khách và account trung tâm là một.
 
@@ -147,17 +147,23 @@ Requirement này chỉ áp dụng khi câu hỏi mở OQ-1 có câu trả lời 
 5. THE SYSTEM SHALL có bảng Athena đọc log CloudTrail của khách, dùng partition projection theo ngày, không cần crawler.
 6. IF `get-trail-status` có `LatestDeliveryError` khác rỗng THEN THE SYSTEM SHALL báo lỗi theo Requirement 15.
 
-## Requirement 10: Prompt log ở lại account khách (lớp 5)
+## Requirement 10: Lưu prompt log ở từng account có Kiro profile (lớp 5)
 
-**User story:** Là người phụ trách bảo mật phía khách, tôi muốn toàn văn prompt và câu trả lời nằm lại trong account của mình, để mã nguồn và nội dung trao đổi không ra ngoài.
+**User story:** Là người vận hành, tôi muốn lưu toàn văn prompt và câu trả lời của mọi account có Kiro profile, để sau này phân tích được user dùng Kiro có hiệu quả không và có dùng cho việc riêng không.
+
+Sửa ngày 2026-11-04 theo D11: bên vận hành được đọc toàn văn. Bản trước giữ toàn văn chỉ ở khách.
 
 **Acceptance criteria**
-1. THE SYSTEM SHALL đặt bucket prompt log ở account Kiro của khách, cùng region với Kiro profile, mã hoá SSE-S3 (D9), chặn public access, chỉ cho phép kết nối TLS.
-2. THE SYSTEM SHALL không cấp cho bất kỳ principal nào của account trung tâm quyền đọc bucket prompt log.
+1. THE SYSTEM SHALL đặt cho mỗi account có Kiro profile một bucket prompt log riêng, ở chính account đó, cùng region với Kiro profile, tách khỏi bucket report, mã hoá SSE-S3 (D9), chặn public access, chỉ cho phép kết nối TLS.
+2. THE SYSTEM SHALL chỉ cho Kiro quyền `s3:PutObject` dưới prefix đã nhập trong Kiro console, với điều kiện `aws:SourceAccount` và `aws:SourceArn` là chính account đó.
 3. THE SYSTEM SHALL có bảng Athena và một role audit thuộc account khách, để người của khách tự tra prompt log theo `requestId`.
-4. THE SYSTEM SHALL áp lifecycle xoá prompt log theo thời gian giữ do khách chọn, ghi trong danh mục dữ liệu.
+4. THE SYSTEM SHALL áp lifecycle xoá prompt log theo thời gian giữ đã chốt ở D12.
+5. THE SYSTEM SHALL chỉ cấp quyền đọc prompt log cho account trung tâm qua danh sách ARN role cụ thể (D11), không cấp cho cả account. Khi danh sách rỗng, không principal nào của account trung tâm đọc được.
+6. THE SYSTEM SHALL không xoá bucket prompt log khi bucket còn object (`force_destroy = false`).
 
 ## Requirement 11: Metadata prompt (tuỳ chọn, lớp 5)
+
+Không áp dụng từ 2026-11-04 (D11). Bên vận hành đã được đọc toàn văn, nên một bản chỉ có metadata không còn cần. Code `infra/customer/prompt-metadata` và `infra/observability/prompt-metadata` giữ lại, không deploy.
 
 **User story:** Là người làm audit ở bên vận hành, tôi muốn biết request nào thuộc phiên chat nào và dài bao nhiêu, mà không đọc được nội dung, để nối lớp 4 với lớp 5.
 
@@ -175,7 +181,7 @@ Requirement này chỉ áp dụng khi quyết định D4 chọn chuyển metadat
 **User story:** Là người làm audit, tôi muốn một bảng request có tên user và ngữ cảnh phiên, để tra một sự cố trong vài phút.
 
 **Acceptance criteria**
-1. THE SYSTEM SHALL có view Athena `kiro_request_audit` cho mỗi khách, nối lớp 4 với danh tính user (lớp 3 hoặc lớp 2), và với metadata prompt (lớp 5) khi Requirement 11 được áp dụng.
+1. THE SYSTEM SHALL có view Athena `kiro_request_audit` cho mỗi khách, nối lớp 4 với danh tính user (lớp 3 hoặc lớp 2), và với prompt log (lớp 5) khi giai đoạn 2 của lớp 5 đã chạy.
 2. WHERE OQ-2 chứng minh request ID của CloudTrail trùng `requestId` của prompt log THE SYSTEM SHALL nối lớp 4 với lớp 5 theo request ID.
 3. IF request ID không trùng THEN THE SYSTEM SHALL chỉ nối theo user và ngày, đồng thời ghi rõ trên dashboard rằng hai nguồn không nối được theo từng request.
 4. THE SYSTEM SHALL có dashboard QuickSight riêng `Kiro Request Audit - <khách>`, không thêm tab vào dashboard của CID hay sample.
