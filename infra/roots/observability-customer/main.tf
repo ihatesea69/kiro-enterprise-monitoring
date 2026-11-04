@@ -127,6 +127,36 @@ module "audit" {
   request_ids_match = var.request_ids_match
 }
 
+# ---- P11: read access to the data lakes of the Kiro accounts
+variable "kiro_lakes" {
+  description = "Kiro accounts whose lakes the dashboard reads, keyed by catalog name (kiro01). Empty = nothing is created."
+  type = map(object({
+    account_id    = string
+    glue_database = string
+    lake_bucket   = string
+    lake_prefix   = optional(string, "normalized")
+  }))
+  default = {}
+}
+
+variable "quicksight_role_name" {
+  type    = string
+  default = "aws-quicksight-service-role-v0"
+}
+
+module "cross_account_catalog" {
+  count                = length(var.kiro_lakes) > 0 ? 1 : 0
+  source               = "../../observability/cross-account-catalog"
+  slug                 = var.slug
+  accounts             = var.kiro_lakes
+  quicksight_role_name = var.quicksight_role_name
+}
+
+output "kiro_lakes_consumer_role_arn" {
+  description = "Set as consumer_role_arns in infra/roots/member-account."
+  value       = try(module.cross_account_catalog[0].consumer_role_arn, null)
+}
+
 output "trail_bucket_name" {
   value = try(module.trail_bucket[0].bucket_name, null)
 }
