@@ -14,36 +14,65 @@ A design for monitoring how a customer's organization uses [Kiro](https://kiro.d
 
 ![Kiro Enterprise Monitoring architecture](diagrams/kiro-enterprise-monitoring-architecture.png)
 
-1. Kiro writes the daily user activity report (CSV) at 02:00 UTC (prefix `kiro/`, SSE-S3).
-2. The CID collector Lambda pulls the report at 03:00 UTC.
-3. The collector writes the report to the Data Collection bucket, partitioned by `account_id`.
-4. The Kiro Usage Analytics normalizer Lambda pulls the report at 03:15 UTC (patches P1, P2).
-5. The normalizer writes the normalized copy to the results bucket.
-6. The identity-map Lambda assumes the customer's read-only role (ExternalId, patch P3).
-7. The role reads the user list from IAM Identity Center.
-8. User names and emails are written to the identity-map bucket.
-9. Kiro emits a data event for each request (not yet verified, OQ-1).
-10. The trail delivers the logs to the CloudTrail bucket in the observability management account.
-11. Prompt logs (full text) stay in the customer account; the observability management account cannot read them.
-12. Data Exports in the payer account delivers CUR 2.0 to the observability management account.
-13. Athena reads the buckets through the Glue tables.
-14. SPICE refreshes at 04:00 UTC.
-15. Dashboards: CUDOS (cost), CID Kiro (licenses), Kiro Usage Analytics (usage), Audit (requests).
-16. Viewers open the dashboards.
-17. The freshness-check Lambda runs at 05:00 UTC and sends an SNS alert when data is late.
+One dashboard covers every Kiro account of an AWS Organization. Each account keeps its own report, data lake and Glue tables and pays for them; the monitoring account only reads. The numbers follow the diagram.
 
-A dashed line means a Lambda in the observability management account reads a customer resource (pull). The customer's payer account, Kiro account and Identity Center account can be separate accounts.
+**Management account** (payer, IAM Identity Center)
+
+1. Users sign in to Kiro with the organization's Identity Center; their subscriptions are billed here.
+2. Kiro writes the daily user activity report (CSV) at about 02:00 UTC to a bucket in the same account, in the Kiro profile Region (prefix `kiro/`, SSE-S3).
+3. EventBridge runs the normalizer Lambda at 03:15 UTC in the dashboard Region.
+4. The normalizer reads the new report, keyed by column header (Kiro adds a `<model>_messages` column for each new model).
+5. It writes per-user facts and per-model rows to the account's data lake, exposed by two Glue tables.
+6. The identity-map Lambda reads users from Identity Center (the report carries only user IDs).
+7. It writes the user ID to name and email table. Steps 6-7 run only here: the user store is organization-wide.
+8. Data Exports delivers a Kiro-only CUR 2.0, the source for paid but idle licences.
+
+**Member accounts**, one copy each, nothing shared
+
+9. Users work in Kiro through the account's own Kiro profile.
+10. Kiro writes the account's report to the account's own bucket.
+11. The account's EventBridge rule starts the account's normalizer.
+12. The normalizer reads the account's report.
+13. It writes to the account's own data lake.
+
+**Monitoring account** (read only)
+
+14. Athena reads the management account's Glue tables and S3 through read-only resource policies.
+15. The same for each member account.
+16. SPICE imports from Athena once a day, over a rolling 3-month window.
+17. The dashboard reads SPICE and filters by account.
+18. Viewers open the dashboard; opening it runs no Athena query.
+
+A dashed line means the monitoring account reads a customer resource (pull); it never writes there.
+
+## Status
+
+| Part | State |
+|---|---|
+| Management account, single-account pipeline (sample + patches P1-P8) | Running since 2026-11-02. Dashboard totals match the raw CSV (users, messages, credits). Measured cost about $0.40 a month, excluding QuickSight licences |
+| Per-account data plane, `infra/customer/data-lake` (patch P10) | Merged; `terraform test` 11/11 pass against mocked providers. Not applied to a member account yet |
+| Cross-account catalog, views and dataset in the monitoring account | Next patch |
+| Kiro-only CUR 2.0 export, `infra/customer/cur-export` | Written; cross-account delivery not measured yet |
+
+Pilot steps for one member account: [`docs/MEMBER-ACCOUNTS.md`](docs/MEMBER-ACCOUNTS.md).
 
 ## Design points
 
 - **Pull, not push.** Kiro writes the activity report and the prompt log only to a bucket in the account where users are subscribed; Kiro does not support a bucket in another account. Lambdas in the observability management account read the customer's report bucket, and the customer only adds a bucket policy.
 - **The report bucket must use SSE-S3 under the `kiro/` prefix.** The CID collector does not support SSE-KMS source buckets, and the Data Collection Stack does not pass a prefix to the Kiro module, so the module default `kiro/` always applies.
 - **Prompt text never leaves the customer account.** An optional Lambda in the customer account can forward an allow-listed set of metadata fields (IDs, timestamps, lengths), never the prompt or response text.
-- **One Kiro Usage Analytics deployment per customer.** The sample has no account column, so customers would mix in one deployment. Running it in the observability management account needs four small patches:
+- **One Kiro Usage Analytics deployment per customer.** The sample has no account column, so customers would mix in one deployment. The vendored sample carries these patches ([`vendor/PATCHES.md`](vendor/PATCHES.md)):
   - P1: make the report path take a source account instead of the deploying account.
   - P2: turn the preflight bucket check into a warning when the bucket belongs to another account.
   - P3: pass an ExternalId when the identity-map Lambda assumes the customer's role.
   - P4: encrypt the identity-map bucket with SSE-S3 instead of a dedicated KMS key.
+  - P5: optional permissions boundary on every role the sample creates.
+  - P6: no default start for the Athena partition projection; `deploy.sh` stops if `PROJECTION_START` is missing.
+  - P7: a scoped inline Athena and Glue policy per deployment on the QuickSight service role, instead of relying on the shared managed policy.
+  - P8: remaining monthly credits per user, with OK, WATCH, AT_RISK and EXHAUSTED states.
+- **Rolling projection window.** Partition projection lists one S3 prefix per day in its range on every read. Upstream projects `2020-01-01,NOW+1YEARS`, about 2,860 mostly empty prefixes per table read. The tables now use `NOW-3MONTHS,NOW` (about 92), and the Terraform module refuses a future end date.
+- **Daily refresh.** Kiro exports once a day, so SPICE refreshes once a day after the normalizer. A 15-minute refresh would only re-read the same data and multiply S3 request costs.
+- **Data lake in the dashboard Region.** Athena reads another account's Glue catalog only in the same Region; the report stays in the Kiro profile Region.
 - **No KMS keys.** The CloudTrail, prompt-log and identity-map buckets use SSE-S3 (decision D9). A KMS version needs three keys per customer, and at 200 customers the keys and decrypt requests were about 1,820 of 2,220 USD a month in the estimate. The trade-off: read access depends on S3 and IAM permissions alone, with no second `kms:Decrypt` check.
 - **Only the cost layers have history.** CUR can be backfilled for up to 14 months; the activity report, CloudTrail and prompt logs start on the day they are enabled.
 
@@ -92,7 +121,7 @@ The full list (OQ-1 to OQ-13) and the decisions still open (D1 to D8) are in [`d
 | `diagrams/build_architecture.py`, `diagrams/drawio_lib.py` | Generator for the detailed diagram, with a geometry check |
 | `diagrams/verify_drawio.py` | Independent diagram check: XML, dangling edges, AWS4 icon names, note fit, page bounds |
 | `LICENSE` | MIT License |
-| `vendor/sample-kiro-user-analytics-quicksight-dashboard/` | The layer 3 sample at upstream commit `1f5f5b8` (MIT-0), plus patches P1-P3 for a report bucket in another account and an ExternalId on the Identity Center role |
+| `vendor/sample-kiro-user-analytics-quicksight-dashboard/` | The layer 3 sample at upstream commit `1f5f5b8` (MIT-0), plus patches P1-P8 (listed under Design points) |
 | `vendor/PATCHES.md` | Upstream pin, SHA256 of patched files, every patched line, test results before and after |
 | `tools/survey_customer.py` | Read-only survey of a customer's accounts. Stops before any other call if a profile is not the expected account |
 | `tools/measure_oq.py` | Measures the open questions from temporary buckets. Prints only counts and ID shapes, never content |
