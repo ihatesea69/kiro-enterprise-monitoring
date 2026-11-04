@@ -8,7 +8,7 @@ A design for monitoring how a customer's organization uses [Kiro](https://kiro.d
 | 2 | [CID Kiro User Activity Dashboard](https://docs.aws.amazon.com/guidance/latest/cloud-intelligence-dashboards/kiro-user-activity-dashboard.html) | Which licenses are paid for but idle, and who should move to another tier? | CUR 2.0 and the Kiro user activity report |
 | 3 | Kiro Usage Analytics ([aws-samples/sample-kiro-user-analytics-quicksight-dashboard](https://github.com/aws-samples/sample-kiro-user-analytics-quicksight-dashboard)) | Who uses Kiro, whose usage is dropping, and which models are chosen? | Kiro user activity report |
 | 4 | CloudTrail data events | Which request was made, by whom, when, and did it fail? | A trail that records data events only |
-| 5 | Kiro prompt logging | What was asked and answered (audit only) | Prompt log bucket, kept in the customer account |
+| 5 | Kiro prompt logging | What was asked and answered | One prompt log bucket in each account that has a Kiro profile |
 
 ## Architecture
 
@@ -53,6 +53,7 @@ A dashed line means the monitoring account reads a customer resource (pull); it 
 | Per-account data plane, `infra/customer/data-lake` (patch P10) | Merged; `terraform test` 11/11 pass against mocked providers. Not applied to a member account yet |
 | Cross-account catalog, views and dataset in the monitoring account | Next patch |
 | Kiro-only CUR 2.0 export, `infra/customer/cur-export` | Written; cross-account delivery not measured yet |
+| Prompt logging phase 1 (store only), `infra/customer/prompt-logs` | Spec updated 2026-11-04; pilot in a management account next. Retention (D12) not decided yet |
 
 Pilot steps for one member account: [`docs/MEMBER-ACCOUNTS.md`](docs/MEMBER-ACCOUNTS.md).
 
@@ -60,7 +61,7 @@ Pilot steps for one member account: [`docs/MEMBER-ACCOUNTS.md`](docs/MEMBER-ACCO
 
 - **Pull, not push.** Kiro writes the activity report and the prompt log only to a bucket in the account where users are subscribed; Kiro does not support a bucket in another account. Lambdas in the observability management account read the customer's report bucket, and the customer only adds a bucket policy.
 - **The report bucket must use SSE-S3 under the `kiro/` prefix.** The CID collector does not support SSE-KMS source buckets, and the Data Collection Stack does not pass a prefix to the Kiro module, so the module default `kiro/` always applies.
-- **Prompt text never leaves the customer account.** An optional Lambda in the customer account can forward an allow-listed set of metadata fields (IDs, timestamps, lengths), never the prompt or response text.
+- **Prompt logs are stored first, read centrally later.** Phase 1 only stores them: one SSE-S3 bucket per account with a Kiro profile, in that account and the profile's Region, with a retention lifecycle. Phase 2 lets named roles of the monitoring account read them through the cross-account catalog (decision D11); until a role is listed, no principal of the monitoring account can read them. Content analysis is a later phase. The metadata-only Lambda (`prompt-metadata`) is kept in the repo but no longer deployed.
 - **One Kiro Usage Analytics deployment per customer.** The sample has no account column, so customers would mix in one deployment. The vendored sample carries these patches ([`vendor/PATCHES.md`](vendor/PATCHES.md)):
   - P1: make the report path take a source account instead of the deploying account.
   - P2: turn the preflight bucket check into a warning when the bucket belongs to another account.
