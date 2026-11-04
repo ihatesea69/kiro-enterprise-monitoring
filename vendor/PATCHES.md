@@ -23,6 +23,10 @@
 | `scripts/preflight.sh` | `804e60cc696ad0d292aa635d4680201409dfdd0dc7846d1e3659b98253fbc1b2` |
 | `scripts/identity_map_lambda.py` | `34a58a1795ddb00e82bc1d9c0dc9cb6311a30d494ed3c24f6c1dc9b3708476f8` |
 | `scripts/teardown.sh` | `fc3092a889f1e51180e4c8746a861bdfea84b685e23f9658dba6ddf2c381dfa3` |
+| `scripts/build_views.py` (P6, P8) | `82d83bfe68609189c3f5e70dfad867150850ebbe515b7d90a669821319c250a9` |
+| `scripts/normalize_report_lambda.py` (P8) | `21aae6c65f0f91b09846ce1ce4f682dfd4f82a4511195d4a3934852773463865` |
+| `scripts/create_dashboard.py` (P8) | `8b7d0a7a5c9481b1e18afb05de7b8ab1e327d0c7f1ee176de51fbf46a47ff27c` |
+| `cfn/02-quicksight.yaml` (P8) | `60e72dca0124fc8e14c4651a86e5927cbfe992d96d882dff6ebf0213fa621029` |
 
 ## Patches
 
@@ -81,6 +85,28 @@ Added 2026-11-02. Upstream relies on the account-wide managed policy `AWSQuicksi
 - `scripts/teardown.sh` deletes only `<STACK_PREFIX>-QuickSightAthenaAccess`; it never detaches the shared managed policy.
 - Measured on the first customer: with only this inline policy (managed policy detached), a SPICE ingestion COMPLETED. IAM policy simulator on the live document: 6/6 decisions as expected (own workgroup and database allowed; workgroup `primary`, another database, and `glue:DeleteTable` denied).
 
+### P8. Remaining monthly credits per user (credit headroom)
+
+Added 2026-11-03. Kiro allocates plan credits per calendar month and resets them on the 1st. The report carries each user's limit in `Usage_Limit`, which upstream's normalizer dropped. On the first customer's first full day each user used 45-50% of a 10,000 limit, so the dashboard has to flag users before they hit the cap. P8 is additive: no existing view output, dataset column, visual or schedule changes, and the tests pin that by sha256 against the pre-P8 output.
+
+- `scripts/normalize_report_lambda.py`: new `_FACT_TRAILING_COLUMNS = ["usage_limit"]`, matched by header like every other column and written AFTER the bookkeeping columns, so it is the last field of a facts part. Parts written before P8 have one field fewer, and OpenCSVSerDe reads a missing trailing field as NULL, the same way pre-`part_id` parts read `part_id`/`processed_ts`. `_BOOKKEEPING` and the models parts are unchanged.
+- `scripts/build_views.py`: `report_facts_raw` gains a trailing `usage_limit string`. The `report_facts` and `report_models` views are byte-identical: both select explicit columns.
+- New `athena/0b_credit_headroom.sql`, view `credit_headroom`, one row per user per calendar month: `month`, `user_id`, `user_label`, `idc_username`, `idc_email`, `user_tier`, `usage_limit`, `credits_used_mtd`, `remaining_credits` (limit minus used, floored at 0), `pct_used` (above 1 in overage), `overage_enabled`, `overage_cap`, `overage_credits_used`, `as_of_date`, `days_elapsed`, `days_in_month`, `projected_month_end_credits` (used x days in month / days elapsed), `status`, `is_latest_month`.
+  - Credits, overage and tier come from `base_user_activity`, so they are deduped through `report_facts`; all client rows of the month are summed. `usage_limit` comes from `report_facts_raw`: the latest non-empty value in the month, ordered like the `report_facts` dedup (`export_ts`, `processed_ts`, `part_id`).
+  - `days_elapsed` runs from the 1st to the latest `activity_date` in the data, not the wall clock, capped at the month's last day. A finished month projects to its actual total.
+  - Status, from two constants in the view's `params` CTE (`watch_pct = 0.75`, `at_risk_pct = 0.90`): `UNKNOWN_LIMIT` when the limit is NULL or <= 0 (not scored; remaining and pct are NULL, never 100%), `EXHAUSTED` when used >= limit, `AT_RISK` when pct >= 0.90 or the projection reaches the limit, `WATCH` when pct >= 0.75, else `OK`.
+- `cfn/02-quicksight.yaml`: `CreditHeadroomDataSet` (SPICE, `<prefix>-credit-headroom`) and `CreditHeadroomRefreshSchedule`, daily `FULL_REFRESH` at 04:55 UTC, after the existing 04:00-04:50 schedules.
+- `scripts/create_dashboard.py`: dataset identifier `headroom`. On Economics, below the existing tiles: KPI "Users at risk of running out of credits" (distinct users with `AT_RISK` or `EXHAUSTED`) and table "Credit headroom by user (latest month)", sorted by `pct_used` descending. Both are pinned to `is_latest_month = 'Yes'` and follow the Tier picker; the date-range picker does not apply to them. No conditional formatting: the sample uses none.
+- `scripts/deploy.sh`: `credit-headroom` added to `QS_ALL_DATASETS` and `QS_LABEL_DATASETS`. `scripts/teardown.sh` is unchanged: the dataset and its schedule belong to the QuickSight stack, which teardown deletes.
+- Cost: one more daily SPICE refresh. The view reads the raw facts table about four times (twice through `base_user_activity`, once through `user_dim`, once directly), each listing the days P6 projects.
+- Limits: the first month after the report is enabled misses usage from before the enable date, so remaining credits read high in that month. The projection is linear from the 1st, so one heavy early day already flags `AT_RISK`. A user whose only rows in a month were normalized before P8 reads `UNKNOWN_LIMIT` until a newer export or the backfill below.
+
+Applying P8 to an existing deployment:
+
+1. `python tools/package_sample.py` at the merged commit, then `scripts/deploy.sh` with the same variables as the first deploy. The normalizer zip is keyed by content hash, so the function gets the new code; deploy.sh then invokes it, recreates the report tables with the new column, builds every view including `credit_headroom`, creates the dataset and schedule, and updates the dashboard.
+2. Files normalized before P8 are skipped by the (key, ETag) check, so their parts keep no `usage_limit`. The view fills a month from any newer export, so the next scheduled run (03:15 UTC) fills it for every user active that day. To fill every user now: add `REPROCESS_ALL=true` to the normalizer's environment (keep `RAW_BUCKET`, `RAW_PREFIX`, `OUT_BUCKET`, `OUT_PREFIX`), invoke it once, then remove the variable. The same part keys are rewritten in place, so nothing is deleted or orphaned.
+3. Refresh SPICE for `<prefix>-credit-headroom`, or wait for the 04:55 UTC schedule.
+
 ## Tests
 
 `tests/test_crossaccount_patches.py` has 13 tests for P1-P3. Each patch is tested with its new input both set and empty. `tests/test_no_kms_patch.py` has 7 tests for P4.
@@ -93,6 +119,7 @@ Added 2026-11-02. Upstream relies on the account-wide managed policy `AWSQuicksi
 | After P1-P5 | 170 | 159 | 10 | 1 |
 | After P1-P6 | 181 | 170 | 10 | 1 |
 | After P1-P7 | 189 | 178 | 10 | 1 |
+| After P1-P8, pytest, the 9 `TestTagMerge` tests deselected | 218 | 214 | 0 | 4 |
 
 - The 10 errors are the same in both runs, all in `test_versioning.TestTagMerge`. That test starts `bash` through Python `subprocess`, which on this Windows machine resolves to the WSL launcher in System32 instead of Git Bash and fails with a WSL RPC error. They do not touch any patched code path.
 - Against the five upstream files restored byte-exact, 9 of the 13 new tests fail. The 4 that pass on upstream guard upstream behaviour that must survive (one `Conditions` block, the same-account `FAIL`, no `ExternalId` when the variable is empty or unset).
@@ -100,7 +127,8 @@ Added 2026-11-02. Upstream relies on the account-wide managed policy `AWSQuicksi
 - P6: `tests/test_projection_range_patch.py` has 11 tests, 3 of them run the `deploy.sh` guard block under Git Bash. Against the tree before P6, 10 fail; the one that passes checks that `report_tables_ddl()` keeps the upstream default for three-argument callers.
 - The 10 `TestTagMerge` errors have a found cause: `subprocess.run(["bash", ...])` on Windows searches System32 before `PATH`, so it starts the WSL launcher even when Git Bash is first on `PATH`. The P6 guard tests call the path `shutil.which("bash")` returns.
 - P5: `tests/test_permissions_boundary_patch.py` has 5 tests. Against the tree before P5 (`git archive HEAD`), all 5 fail. `cfn-lint` on all three templates after P5: 0 findings.
-- `cfn-lint` 1.52.0 on all three templates: 0 findings before and after, including after P4.
+- P8: `tests/test_credit_headroom_patch.py` has 38 tests. They run the view's scoring SQL (`params`, `scored`, `rated`) unchanged in sqlite3 on 13 fixture cases, run the normalizer handler against a fake S3 (skip without `REPROCESS_ALL`, same-key rewrite with it), and pin the pre-P8 bytes of the dedup views, the dashboard definition minus the P8 additions, the QuickSight template minus the two P8 resources, and `deploy.sh` minus the P8 lines. Ten single-defect mutations each fail at least one test: the normalizer dropping the column, the column moved before the bookkeeping columns, `report_facts` gaining the column, the WATCH threshold changed, the projection ignored, an unknown limit shown as headroom, an existing schedule moved, the dataset dropped from `QS_LABEL_DATASETS`, an existing Economics tile resized, the KPI counting WATCH. The 4 skips in the P8 row are the boto3-stub test and the 3 P6 guard tests, skipped because only the WSL bash was on `PATH` in that session.
+- `cfn-lint` 1.52.0 on all three templates: 0 findings before and after, including after P4. After P8, `cfn/02-quicksight.yaml`: 0 findings (a planted bad `RefreshType` in a scratch copy is reported, so the run is live).
 - `bash -n` on `deploy.sh`, `preflight.sh` and `teardown.sh`: 0 errors after patching.
 - `preflight.sh` run under Git Bash with a stub `aws` CLI: cross-account prints `[WARN] report bucket belongs to account ...` and makes 0 list calls on the bucket; same-account still prints `[FAIL] user_report not found` after 1 list call.
 
@@ -114,4 +142,4 @@ Added 2026-11-02. Upstream relies on the account-wide managed policy `AWSQuicksi
 
 ## Upgrading the sample
 
-Export the new upstream commit the same way, re-apply P1-P4 by searching for the `PATCH P<n>` markers, re-run the test suite, and update the tables above.
+Export the new upstream commit the same way, re-apply P1-P8 by searching for the `PATCH P<n>` markers, re-run the test suite, and update the tables above.

@@ -40,7 +40,8 @@ adds):
   normalized/facts/export_date=YYYY-MM-DD/part-<hash>.csv
       one row per (activity_date, user_id, client_type) per source file, with
       the stable scalar columns + the bookkeeping columns. Header-keyed, so
-      source column order never matters.
+      source column order never matters. (PATCH P8: usage_limit follows the
+      bookkeeping columns as the last field - see _FACT_TRAILING_COLUMNS.)
   normalized/models/export_date=YYYY-MM-DD/part-<hash>.csv
       LONG form: one row per (activity_date, user_id, client_type, model_name,
       messages) + the bookkeeping columns. model_name is a VALUE, not a column -
@@ -141,9 +142,19 @@ _FACT_COLUMNS = [
 # most recently normalized version of a re-exported file.
 _BOOKKEEPING = ["src_path", "export_ts", "part_id", "processed_ts"]
 
+# PATCH P8 (kiro-enterprise-monitoring): the user's monthly plan credit limit
+# (raw header Usage_Limit), for the credit_headroom view. It is kept OUT of
+# _FACT_COLUMNS and written AFTER the bookkeeping columns, so it is the LAST
+# field of a facts part. Parts written before P8 have one field fewer, and
+# OpenCSVSerDe fills a missing trailing field with NULL - the same mechanism
+# that lets pre-part_id parts read part_id/processed_ts as NULL. Inserting it
+# anywhere else would shift every later column of the older parts. Matched by
+# header name like every other column; models parts are unchanged.
+_FACT_TRAILING_COLUMNS = ["usage_limit"]
+
 # Fixed output headers (data columns + bookkeeping). Order is authoritative -
 # the external-table DDL in build_views.py must match exactly.
-_FACT_OUT_HEADER = _FACT_COLUMNS + _BOOKKEEPING
+_FACT_OUT_HEADER = _FACT_COLUMNS + _BOOKKEEPING + _FACT_TRAILING_COLUMNS  # PATCH P8
 _MODEL_OUT_HEADER = [
     "date",
     "userid",
@@ -286,7 +297,8 @@ def _parse_file(body: str, source_key: str, part_id: str,
         client_v = get("client_type")
         tier_v = get("subscription_tier")
 
-        fact_rows.append([get(c) for c in _FACT_COLUMNS] + book)
+        fact_rows.append([get(c) for c in _FACT_COLUMNS] + book
+                         + [get(c) for c in _FACT_TRAILING_COLUMNS])  # PATCH P8
 
         for mk in model_keys:
             msgs = _to_int(row.get(key_to_header[mk], ""))

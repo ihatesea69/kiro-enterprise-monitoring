@@ -493,6 +493,62 @@ Resources:
             - quicksight:UpdateDataSetPermissions
 
   # ---------------------------------------------------------------------------
+  # PATCH P8 (kiro-enterprise-monitoring): DataSet over credit_headroom - one
+  # row per user per calendar month: monthly credit limit, credits used
+  # month-to-date, remaining credits, linear month-end projection and a status
+  # bucket. Powers the Economics "Users at risk" KPI and headroom table.
+  # Carries the resolved user label, so deploy.sh lists it in
+  # QS_LABEL_DATASETS as well as QS_ALL_DATASETS.
+  # ---------------------------------------------------------------------------
+  CreditHeadroomDataSet:
+    Type: AWS::QuickSight::DataSet
+    Properties:
+      AwsAccountId: !Ref AWS::AccountId
+      DataSetId: !Sub "${ResourcePrefix}-credit-headroom"
+      Name: Kiro - Credit Headroom
+      ImportMode: SPICE
+      PhysicalTableMap:
+        base:
+          RelationalTable:
+            DataSourceArn: !GetAtt AthenaDataSource.Arn
+            Catalog: AwsDataCatalog
+            Schema: !Ref GlueDatabase
+            Name: credit_headroom
+            InputColumns:
+              - { Name: month,                       Type: DATETIME }
+              - { Name: user_id,                     Type: STRING }
+              - { Name: user_label,                  Type: STRING }
+              - { Name: idc_username,                Type: STRING }
+              - { Name: idc_email,                   Type: STRING }
+              - { Name: user_tier,                   Type: STRING }
+              - { Name: usage_limit,                 Type: DECIMAL }
+              - { Name: credits_used_mtd,            Type: DECIMAL }
+              - { Name: remaining_credits,           Type: DECIMAL }
+              - { Name: pct_used,                    Type: DECIMAL }
+              - { Name: overage_enabled,             Type: BOOLEAN }
+              - { Name: overage_cap,                 Type: DECIMAL }
+              - { Name: overage_credits_used,        Type: DECIMAL }
+              - { Name: as_of_date,                  Type: DATETIME }
+              - { Name: days_elapsed,                Type: INTEGER }
+              - { Name: days_in_month,               Type: INTEGER }
+              - { Name: projected_month_end_credits, Type: DECIMAL }
+              - { Name: status,                      Type: STRING }
+              - { Name: is_latest_month,             Type: STRING }
+      Permissions:
+        - Principal: !Ref QuickSightPrincipalArn
+          Actions:
+            - quicksight:DescribeDataSet
+            - quicksight:DescribeDataSetPermissions
+            - quicksight:PassDataSet
+            - quicksight:DescribeIngestion
+            - quicksight:ListIngestions
+            - quicksight:UpdateDataSet
+            - quicksight:DeleteDataSet
+            - quicksight:CreateIngestion
+            - quicksight:CancelIngestion
+            - quicksight:UpdateDataSetPermissions
+
+  # ---------------------------------------------------------------------------
   # Daily SPICE refresh schedules. All run at ~04:00 UTC, after the
   # report-normalizer Lambda (03:15 UTC) and identity-map refresh (03:30 UTC),
   # which themselves run after Kiro's 02:00 UTC export. Schedules are staggered
@@ -602,6 +658,21 @@ Resources:
         ScheduleId: daily
         RefreshType: FULL_REFRESH
         ScheduleFrequency: { Interval: DAILY, TimeOfTheDay: "04:30" }
+
+  # ---------------------------------------------------------------------------
+  # PATCH P8 (kiro-enterprise-monitoring): daily refresh - credit_headroom.
+  # 04:55, five minutes after the last existing schedule (04:50).
+  # ---------------------------------------------------------------------------
+  CreditHeadroomRefreshSchedule:
+    Type: AWS::QuickSight::RefreshSchedule
+    DependsOn: CreditHeadroomDataSet
+    Properties:
+      AwsAccountId: !Ref AWS::AccountId
+      DataSetId: !Sub "${ResourcePrefix}-credit-headroom"
+      Schedule:
+        ScheduleId: daily
+        RefreshType: FULL_REFRESH
+        ScheduleFrequency: { Interval: DAILY, TimeOfTheDay: "04:55" }
 
 Outputs:
   DataSourceArn:
