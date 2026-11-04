@@ -713,9 +713,25 @@ esac
 # already has the policy under its canonical lowercase name.
 ATHENA_POLICY_ARN="arn:aws:iam::aws:policy/service-role/AWSQuicksightAthenaAccess"
 echo ">> Checking AWSQuicksightAthenaAccess on ${QS_IAM_ROLE_NAME}"
-if aws iam list-attached-role-policies --role-name "${QS_IAM_ROLE_NAME}" \
+# PATCH P12 (kiro-enterprise-monitoring): the check below used to be
+#   aws ... | tr '\t' '\n' | grep -Fixq "${ATHENA_POLICY_ARN}"
+# which failed two ways. (1) GNU grep 3.0 in Git for Windows aborts (exit 134)
+# on -F together with -i, so it answered "not attached" for a policy that was
+# attached, on every run. (2) Under `set -o pipefail`, `grep -q` exits at the
+# first match, the writer gets SIGPIPE, and a long list also reads as "not
+# attached". Now: lower-case both sides instead of -i, match whole lines with
+# -Fx, and hand grep a string, not a pipe. Same answer as before otherwise:
+# whole line, case-insensitive, and a failed `aws` call still means "no".
+has_line_ci() {
+    local want have
+    want="$(printf '%s' "$1" | tr 'A-Z' 'a-z')"
+    have="$(printf '%s' "$2" | tr 'A-Z' 'a-z')"
+    grep -Fxq -- "${want}" <<< "${have}"
+}
+if has_line_ci "${ATHENA_POLICY_ARN}" "$(aws iam list-attached-role-policies \
+        --role-name "${QS_IAM_ROLE_NAME}" \
         --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null \
-        | tr '\t' '\n' | grep -Fixq "${ATHENA_POLICY_ARN}"; then
+        | tr '\t' '\n')"; then
     echo "   already attached"
 else
     echo ">> AWSQuicksightAthenaAccess is NOT attached to ${QS_IAM_ROLE_NAME}."

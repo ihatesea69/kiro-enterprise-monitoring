@@ -49,7 +49,7 @@ A dashed line means the monitoring account reads a customer resource (pull); it 
 
 | Part | State |
 |---|---|
-| Management account, single-account pipeline (sample + patches P1-P8) | Running since 2026-11-02. Dashboard totals match the raw CSV (users, messages, credits). Measured cost about $0.40 a month, excluding QuickSight licences |
+| Management account, single-account pipeline (sample + patches P1-P8, P12) | Running since 2026-11-02. Dashboard totals match the raw CSV (users, messages, credits). Measured cost about $0.40 a month, excluding QuickSight licences |
 | Per-account data plane, `infra/customer/data-lake` (patch P10) | Merged; `terraform test` 11/11 pass against mocked providers. Not applied to a member account yet |
 | Cross-account catalog, views and dataset in the monitoring account | Next patch |
 | Kiro-only CUR 2.0 export, `infra/customer/cur-export` | Written; cross-account delivery not measured yet |
@@ -70,6 +70,7 @@ Pilot steps for one member account: [`docs/MEMBER-ACCOUNTS.md`](docs/MEMBER-ACCO
   - P6: no default start for the Athena partition projection; `deploy.sh` stops if `PROJECTION_START` is missing.
   - P7: a scoped inline Athena and Glue policy per deployment on the QuickSight service role, instead of relying on the shared managed policy.
   - P8: remaining monthly credits per user, with OK, WATCH, AT_RISK and EXHAUSTED states.
+  - P12: list lookups in `deploy.sh` and `preflight.sh` no longer crash or read a long list as "not found" (a `grep -Fi` abort in Git Bash, and `grep -q` under `pipefail`).
 - **Rolling projection window.** Partition projection lists one S3 prefix per day in its range on every read. Upstream projects `2020-01-01,NOW+1YEARS`, about 2,860 mostly empty prefixes per table read. The tables now use `NOW-3MONTHS,NOW` (about 92), and the Terraform module refuses a future end date.
 - **Daily refresh.** Kiro exports once a day, so SPICE refreshes once a day after the normalizer. A 15-minute refresh would only re-read the same data and multiply S3 request costs.
 - **Data lake in the dashboard Region.** Athena reads another account's Glue catalog only in the same Region; the report stays in the Kiro profile Region.
@@ -121,7 +122,7 @@ The full list (OQ-1 to OQ-13) and the decisions still open (D1 to D8) are in [`d
 | `diagrams/build_architecture.py`, `diagrams/drawio_lib.py` | Generator for the detailed diagram, with a geometry check |
 | `diagrams/verify_drawio.py` | Independent diagram check: XML, dangling edges, AWS4 icon names, note fit, page bounds |
 | `LICENSE` | MIT License |
-| `vendor/sample-kiro-user-analytics-quicksight-dashboard/` | The layer 3 sample at upstream commit `1f5f5b8` (MIT-0), plus patches P1-P8 (listed under Design points) |
+| `vendor/sample-kiro-user-analytics-quicksight-dashboard/` | The layer 3 sample at upstream commit `1f5f5b8` (MIT-0), plus patches P1-P8 and P12 (listed under Design points) |
 | `vendor/PATCHES.md` | Upstream pin, SHA256 of patched files, every patched line, test results before and after |
 | `tools/survey_customer.py` | Read-only survey of a customer's accounts. Stops before any other call if a profile is not the expected account |
 | `tools/measure_oq.py` | Measures the open questions from temporary buckets. Prints only counts and ID shapes, never content |
