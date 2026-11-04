@@ -143,13 +143,18 @@ if [[ -n "${QS_PRINCIPAL_ARN}" && -n "${ACCOUNT_ID}" ]]; then
     # Principal can be a user OR a group; usernames may contain '/' (e.g. IAM
     # federation produces "role/session"). list-users handles both cleanly,
     # describe-user does not - match by ARN substring instead.
-    if aws quicksight list-users --aws-account-id "${ACCOUNT_ID}" --namespace default \
-            --region "${REGION}" --query 'UserList[].Arn' --output text 2>/dev/null \
-            | tr '\t' '\n' | grep -Fxq "${QS_PRINCIPAL_ARN}"; then
+    # PATCH P12 (kiro-enterprise-monitoring): these two checks used to pipe the
+    # list into `grep -Fxq`. Under `set -o pipefail` grep exits at the first
+    # match, the writer gets SIGPIPE, and an account with many users or groups
+    # read as "Principal not found". grep now reads a string, not a pipe.
+    has_line() { grep -Fxq -- "$1" <<< "$2"; }
+    if has_line "${QS_PRINCIPAL_ARN}" "$(aws quicksight list-users --aws-account-id "${ACCOUNT_ID}" \
+            --namespace default --region "${REGION}" --query 'UserList[].Arn' --output text 2>/dev/null \
+            | tr '\t' '\n')"; then
         ok "Principal exists in QS namespace 'default'"
-    elif aws quicksight list-groups --aws-account-id "${ACCOUNT_ID}" --namespace default \
-            --region "${REGION}" --query 'GroupList[].Arn' --output text 2>/dev/null \
-            | tr '\t' '\n' | grep -Fxq "${QS_PRINCIPAL_ARN}"; then
+    elif has_line "${QS_PRINCIPAL_ARN}" "$(aws quicksight list-groups --aws-account-id "${ACCOUNT_ID}" \
+            --namespace default --region "${REGION}" --query 'GroupList[].Arn' --output text 2>/dev/null \
+            | tr '\t' '\n')"; then
         ok "Principal exists in QS namespace 'default' (group)"
     else
         fail "Principal not found. List with 'aws quicksight list-users --aws-account-id ${ACCOUNT_ID} --namespace default --region ${REGION}'"

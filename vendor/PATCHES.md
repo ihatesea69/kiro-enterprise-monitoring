@@ -107,6 +107,16 @@ Applying P8 to an existing deployment:
 2. Files normalized before P8 are skipped by the (key, ETag) check, so their parts keep no `usage_limit`. The view fills a month from any newer export, so the next scheduled run (03:15 UTC) fills it for every user active that day. To fill every user now: add `REPROCESS_ALL=true` to the normalizer's environment (keep `RAW_BUCKET`, `RAW_PREFIX`, `OUT_BUCKET`, `OUT_PREFIX`), invoke it once, then remove the variable. The same part keys are rewritten in place, so nothing is deleted or orphaned.
 3. Refresh SPICE for `<prefix>-credit-headroom`, or wait for the 04:55 UTC schedule.
 
+### P12. Membership checks that read a list
+
+Added 2026-11-04. Three checks asked "is this ARN in the list the AWS CLI returned" and answered "no" for things that were there. They are two different defects.
+
+- **Crash (`deploy.sh`, the managed policy check).** The check was `aws ... | tr '\t' '\n' | grep -Fixq "${ATHENA_POLICY_ARN}"`. GNU grep 3.0 in Git for Windows aborts (exit 134) on `-F` together with `-i`, with or without a pipe. Every deploy printed "AWSQuicksightAthenaAccess is NOT attached" and attached it again. The second attach changed nothing, so the effect was a wrong message and one useless IAM call. Seen on the first customer on 2026-11-04. `-Fx`, `-Fxq` and `-i` alone are fine.
+- **SIGPIPE (`deploy.sh`, `preflight.sh` twice).** Under `set -o pipefail`, `list | grep -q` ends the grep at the first match, the writer gets SIGPIPE and the pipeline fails, so a list longer than the pipe buffer reads as "not found". Measured with a fake list of 2,000 ARNs and the wanted one first: the old form failed 30 of 30 runs, a list of 20 entries never. `preflight.sh` used it for the QuickSight user and group lookup, so an account with many users could read "Principal not found".
+- **Change.** `deploy.sh` gets a function `has_line_ci` that lower-cases both sides (no `-i`), matches a whole line with `-Fx`, and hands grep a string instead of a pipe. `preflight.sh` gets `has_line`, the same without the lower-casing, because it never matched case-insensitively. Answers are otherwise as before: whole line only, and a failed `aws` call still means "no".
+- **Left alone on purpose.** `deploy.sh` `printf '%s' "${STACK_PREFIX}" | grep -Eq ...` and `run-checks.sh` `... | head -1 | grep -q 'version 3'` pipe one short string that is fully written before grep exits; they cannot hit the SIGPIPE case and were measured not to.
+- **P8 test.** `test_deploy_sh_change_is_only_those_lines` puts the original 3 lines back at the P12 spot before it hashes `deploy.sh`, so it still proves that nothing outside the P8 and P12 blocks changed. An unrelated edit to `deploy.sh` still fails it.
+
 ## Tests
 
 `tests/test_crossaccount_patches.py` has 13 tests for P1-P3. Each patch is tested with its new input both set and empty. `tests/test_no_kms_patch.py` has 7 tests for P4.
@@ -120,6 +130,7 @@ Applying P8 to an existing deployment:
 | After P1-P6 | 181 | 170 | 10 | 1 |
 | After P1-P7 | 189 | 178 | 10 | 1 |
 | After P1-P8, pytest, the 9 `TestTagMerge` tests deselected | 218 | 214 | 0 | 4 |
+| After P1-P8 and P12, same selection, Git Bash first on `PATH` | 236 | 235 | 0 | 1 |
 
 - The 10 errors are the same in both runs, all in `test_versioning.TestTagMerge`. That test starts `bash` through Python `subprocess`, which on this Windows machine resolves to the WSL launcher in System32 instead of Git Bash and fails with a WSL RPC error. They do not touch any patched code path.
 - Against the five upstream files restored byte-exact, 9 of the 13 new tests fail. The 4 that pass on upstream guard upstream behaviour that must survive (one `Conditions` block, the same-account `FAIL`, no `ExternalId` when the variable is empty or unset).
@@ -129,6 +140,7 @@ Applying P8 to an existing deployment:
 - P5: `tests/test_permissions_boundary_patch.py` has 5 tests. Against the tree before P5 (`git archive HEAD`), all 5 fail. `cfn-lint` on all three templates after P5: 0 findings.
 - P8: `tests/test_credit_headroom_patch.py` has 38 tests. They run the view's scoring SQL (`params`, `scored`, `rated`) unchanged in sqlite3 on 13 fixture cases, run the normalizer handler against a fake S3 (skip without `REPROCESS_ALL`, same-key rewrite with it), and pin the pre-P8 bytes of the dedup views, the dashboard definition minus the P8 additions, the QuickSight template minus the two P8 resources, and `deploy.sh` minus the P8 lines. Ten single-defect mutations each fail at least one test: the normalizer dropping the column, the column moved before the bookkeeping columns, `report_facts` gaining the column, the WATCH threshold changed, the projection ignored, an unknown limit shown as headroom, an existing schedule moved, the dataset dropped from `QS_LABEL_DATASETS`, an existing Economics tile resized, the KPI counting WATCH. The 4 skips in the P8 row are the boto3-stub test and the 3 P6 guard tests, skipped because only the WSL bash was on `PATH` in that session.
 - `cfn-lint` 1.52.0 on all three templates: 0 findings before and after, including after P4. After P8, `cfn/02-quicksight.yaml`: 0 findings (a planted bad `RefreshType` in a scratch copy is reported, so the run is live).
+- P12: `tests/test_grep_pipefail_patch.py` has 18 tests. The behaviour tests cut the real blocks out of `deploy.sh` and `preflight.sh` and run them under bash with `set -euo pipefail` and a fake `aws`: policy present, present in another case, only a longer line that contains it, absent, empty list, failed `aws` call, and a 5,000-entry list with the match first. Against the scripts from `main`, 17 of the 18 fail (the old block also prints "NOT attached" for a list that holds the policy, together with grep's `Aborted`); the one that passes guards the two short-string checks that must stay as they are. Four single-line breaks of the fix: three are caught (`-Fixq` back, the lower-casing of one side dropped, the pipe back); a fourth, dropping a `|| true`, changed nothing, so that `|| true` was removed from the patch.
 - `bash -n` on `deploy.sh`, `preflight.sh` and `teardown.sh`: 0 errors after patching.
 - `preflight.sh` run under Git Bash with a stub `aws` CLI: cross-account prints `[WARN] report bucket belongs to account ...` and makes 0 list calls on the bucket; same-account still prints `[FAIL] user_report not found` after 1 list call.
 

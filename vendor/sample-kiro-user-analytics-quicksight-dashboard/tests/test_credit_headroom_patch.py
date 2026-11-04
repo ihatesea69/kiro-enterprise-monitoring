@@ -91,6 +91,14 @@ P8_DEPLOY_LINES = {
     b"# its view selects user_label.\n",
     b"    credit-headroom\n",
 }
+# P12 replaced these 3 original lines of deploy.sh (see test_grep_pipefail_patch.py).
+P12_START = b"# PATCH P12 (kiro-enterprise-monitoring)"
+P12_END = b"        | tr '\\t' '\\n')\"; then\n"
+P12_ORIGINAL = (
+    b'if aws iam list-attached-role-policies --role-name "${QS_IAM_ROLE_NAME}" \\\n'
+    b"        --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null \\\n"
+    b"        | tr '\\t' '\\n' | grep -Fixq \"${ATHENA_POLICY_ARN}\"; then\n"
+)
 
 
 def _sha(obj) -> str:
@@ -698,7 +706,16 @@ class TestP8DeployAndTeardown(unittest.TestCase):
             "user-daily-dense", "credit-headroom"])
 
     def test_deploy_sh_change_is_only_those_lines(self):
-        lines = DEPLOY_BYTES.splitlines(keepends=True)
+        # P12 later rewrote the 3-line AWSQuicksightAthenaAccess check. Put the
+        # original 3 lines back at that spot first, so this test still proves
+        # that outside the P8 lines and the P12 block deploy.sh is untouched;
+        # tests/test_grep_pipefail_patch.py pins what the P12 block does.
+        data = DEPLOY_BYTES
+        if P12_START in data:
+            s = data.index(P12_START)
+            e = data.index(P12_END, s) + len(P12_END)
+            data = data[:s] + P12_ORIGINAL + data[e:]
+        lines = data.splitlines(keepends=True)
         self.assertEqual(sum(ln in P8_DEPLOY_LINES for ln in lines), 4)
         pre = b"".join(ln for ln in lines if ln not in P8_DEPLOY_LINES)
         self.assertEqual(hashlib.sha256(pre).hexdigest(), PRE_P8_DEPLOY_SH)
