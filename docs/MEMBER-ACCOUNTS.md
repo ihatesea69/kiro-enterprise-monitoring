@@ -78,3 +78,26 @@ The normalized lake can always be rebuilt from the report. Invoke the normalizer
 - `prevent_destroy` on the report and backup buckets: `terraform destroy` stops with an error.
 - The report bucket denies `s3:DeleteBucket`; the backup bucket denies deleting objects, versions and the bucket. To remove either, first remove the deny statement in a separate, confirmed change.
 - CloudFormation stacks of the old pipeline can be protected with `aws cloudformation update-termination-protection --enable-termination-protection` (one command per stack; not done by this patch).
+
+## Letting the dashboard account read the lakes (patch P11)
+
+`infra/observability/cross-account-catalog`, wired into `infra/roots/observability-customer` through the variable `kiro_lakes` (empty by default: nothing is created).
+
+For each Kiro account it creates, in the dashboard account:
+
+- an Athena data catalog of type `GLUE` named after the key (for example `kiro01`) with the Kiro account as `catalog-id`;
+- one inline policy `kiro-<slug>-QuickSightCrossAccount` on the QuickSight service role. It is a separate policy, so it never touches `kiro-<slug>-QuickSightAthenaAccess` or `-QuickSightS3Access`, which other tools rewrite as a whole. It allows only: `athena:Get*/List*` metadata on the new catalogs, `glue:Get*` on the Kiro account's own database and tables, `s3:GetObject` under `normalized/` of each lake and `s3:ListBucket` limited to that prefix. No write action, no wildcard resource.
+
+The plan fails before the IAM API does if the policy would pass 6,000 characters (IAM allows 10,240 for all inline policies of the role together; the role holds about 2,700 today).
+
+The role ARN is looked up, not built from the name: the real ARN has the path `/service-role/`, and a bucket policy that names the wrong ARN would deny silently.
+
+### Order
+
+1. Apply the dashboard side: `terraform plan -var-file=.../observability.tfvars`, expect only creates (2 per account: the catalog and the policy).
+2. Take `kiro_lakes_consumer_role_arn` from its output and put it in `consumer_role_arns` of `infra/roots/member-account` for that Kiro account, then plan and apply it. That adds the lake bucket policy and the Glue resource policy that let this one role read.
+3. Check by measurement, not by assumption. The Glue resource policy names only the QuickSight role, so an Athena query from a person's user cannot prove the path. Create one throwaway SPICE dataset on the catalog (custom SQL over `"kiro01"."kiro_kiro01"."report_facts_raw"`), run an ingestion and read its status and row count. An empty table with a COMPLETED ingestion already proves the path: Athena lists the projected S3 prefixes and would fail with access denied if the grants were wrong. Remove the throwaway dataset afterwards.
+
+### Rolling back
+
+Remove the entry from `kiro_lakes` and apply: the catalog and the policy go, nothing else in the dashboard account is touched. In the Kiro account, empty `consumer_role_arns` and apply: the lake loses its cross-account statements.
