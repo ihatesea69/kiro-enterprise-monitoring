@@ -12,7 +12,7 @@ A design for monitoring how a customer's organization uses [Kiro](https://kiro.d
 
 ## Architecture
 
-![Kiro Enterprise Monitoring architecture](diagrams/kiro-customer-monitoring.png)
+![Kiro Enterprise Monitoring architecture](diagrams/kiro-enterprise-monitoring-architecture.png)
 
 1. Kiro writes the daily user activity report (CSV) at 02:00 UTC (prefix `kiro/`, SSE-S3).
 2. The CID collector Lambda pulls the report at 03:00 UTC.
@@ -86,7 +86,8 @@ The full list (OQ-1 to OQ-13) and the decisions still open (D1 to D8) are in [`d
 | `.kiro/specs/kiro-customer-monitoring/design.md` | Architecture, evidence from AWS docs and source code, patches, data models, decisions, open questions (Vietnamese) |
 | `.kiro/specs/kiro-customer-monitoring/tasks.md` | Implementation tasks with owner, dependencies and a measurable done check (Vietnamese) |
 | `diagrams/kiro-customer-monitoring.drawio` | The architecture diagram above, edited by hand in draw.io |
-| `diagrams/kiro-customer-monitoring.png` | PNG export of that diagram, used in this README |
+| `diagrams/kiro-enterprise-monitoring-architecture.png` | Current architecture diagram (management, member and monitoring accounts), used in this README |
+| `diagrams/kiro-customer-monitoring.png` | Earlier PNG export of the hand-edited diagram above, kept for reference |
 | `diagrams/kiro-customer-monitoring-chi-tiet.drawio` | Detailed two-page diagram with notes (data flow, cross-account permissions), generated |
 | `diagrams/build_architecture.py`, `diagrams/drawio_lib.py` | Generator for the detailed diagram, with a geometry check |
 | `diagrams/verify_drawio.py` | Independent diagram check: XML, dangling edges, AWS4 icon names, note fit, page bounds |
