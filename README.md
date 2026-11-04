@@ -53,7 +53,7 @@ A dashed line means the monitoring account reads a customer resource (pull); it 
 | Per-account data plane, `infra/customer/data-lake` (patch P10) | Merged; `terraform test` 11/11 pass against mocked providers. Not applied to a member account yet |
 | Cross-account catalog, views and dataset in the monitoring account | Next patch |
 | Kiro-only CUR 2.0 export, `infra/customer/cur-export` | Written; cross-account delivery not measured yet |
-| Prompt logging phase 1 (store only), `infra/customer/prompt-logs` | Spec updated 2026-11-04; pilot in a management account next. Retention (D12) not decided yet |
+| Prompt logging phase 1 (store only), `infra/customer/prompt-logs` | Spec updated 2026-11-04; pilot in a management account next. Retention 180 days (D12) |
 
 Pilot steps for one member account: [`docs/MEMBER-ACCOUNTS.md`](docs/MEMBER-ACCOUNTS.md).
 
