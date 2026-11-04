@@ -90,6 +90,13 @@ DEFAULT_PROJECTION_END = "NOW+1YEARS"
 _PROJ_BOUND_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}|NOW([+-][0-9]{1,4}(DAYS|WEEKS|MONTHS|YEARS))?)$")
 
 
+# PATCH P8 (kiro-enterprise-monitoring): report_facts_raw gains a trailing
+# usage_limit column, written last by the normalizer (_FACT_TRAILING_COLUMNS).
+# The report_facts / report_models views are NOT changed: both select explicit
+# columns, so their output stays byte-identical. The credit_headroom view
+# (athena/0b_credit_headroom.sql) reads usage_limit from report_facts_raw.
+
+
 def _validate_projection_bound(value: str, kind: str) -> str:
     if not _PROJ_BOUND_RE.match(value):
         raise ValueError(f"Invalid projection {kind}: {value!r} (yyyy-MM-dd or NOW[+-]<n><DAYS|WEEKS|MONTHS|YEARS>)")
@@ -158,7 +165,10 @@ def report_tables_ddl(database: str, bucket: str, prefix: str,
             f"    src_path             string,\n"
             f"    export_ts            string,\n"
             f"    part_id              string,\n"
-            f"    processed_ts         string\n"
+            f"    processed_ts         string,\n"  # PATCH P8: comma for the column below
+            # PATCH P8: trailing column, last like in the normalizer's
+            # _FACT_OUT_HEADER; parts written before P8 read it as NULL.
+            f"    usage_limit          string\n"
             f")\n"
             f"PARTITIONED BY (export_date string)\n"
             f"ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.OpenCSVSerde'\n"

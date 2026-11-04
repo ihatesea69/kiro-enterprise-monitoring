@@ -59,6 +59,8 @@ DATASET_SUFFIXES = {
     "movers":       "wow-movers",
     "models":       "model-usage",
     "heatmap":      "activity-heatmap",
+    # PATCH P8 (kiro-enterprise-monitoring): credit_headroom view.
+    "headroom":     "credit-headroom",
 }
 # NOTE: the People engagement funnel was reworked from the native funnel chart
 # (which read the `engagement-funnel` SPICE dataset) to three date-range-driven
@@ -1384,6 +1386,52 @@ def build_definition(account_id: str, region: str, resource_prefix: str,
     economics_sheet = next(s for s in sheets if s["SheetId"] == "economics")
     economics_sheet["ParameterControls"] = _date_controls("economics") + [_tier_control("economics")]
 
+    # PATCH P8 (kiro-enterprise-monitoring): credit headroom, appended BELOW the
+    # existing Economics tiles, which are left as they are. Both visuals read
+    # `headroom` (credit_headroom: one row per user per calendar month) and are
+    # pinned to the latest month by fg-latest-month-headroom, so the date-range
+    # picker does not apply to them; the Tier picker does (fg-tier-headroom).
+    # The status thresholds quoted in the subtitles live in
+    # athena/0b_credit_headroom.sql (tests pin the two to each other). No
+    # conditional formatting: the sample uses none anywhere.
+    headroom_visuals = ["e-headroom-at-risk", "e-headroom-users"]
+    economics_sheet["Visuals"].extend([
+        _sub(_kpi_distinct_count("e-headroom-at-risk", "Users at risk of running out of credits",
+                                 "headroom", "headroom_at_risk_user"),
+             "Users whose credits this calendar month have reached 90% of their monthly limit "
+             "or are on pace to reach it by month end (AT_RISK), or have reached it (EXHAUSTED). "
+             "Latest month in the data only, not affected by the date-range picker. Users whose "
+             "limit is missing from the report are not counted."),
+        _sub(_table("e-headroom-users", "Credit headroom by user (latest month)",
+                    "headroom",
+                    dimensions=["user_label", *idc_dims, "user_tier", "status"],
+                    # One dataset row per user in the latest month, so MAX is
+                    # simply that row's value (as on the u-profile strip).
+                    values=[
+                        ("pct_used",                    "MAX", "percent"),
+                        ("remaining_credits",           "MAX"),
+                        ("credits_used_mtd",            "MAX"),
+                        ("usage_limit",                 "MAX"),
+                        ("projected_month_end_credits", "MAX"),
+                        ("overage_credits_used",        "MAX"),
+                    ],
+                    sort_by=("pct_used", "DESC")),
+             "One row per user for the latest month in the data, highest % used first. Plan "
+             "credits reset each calendar month. Remaining = monthly limit - credits used this "
+             "month (0 once reached). Projected = credits so far / days elapsed x days in month. "
+             "Status: OK; WATCH = >=75% used; AT_RISK = >=90% used or projected to reach the "
+             "limit by month end; EXHAUSTED = limit reached; UNKNOWN_LIMIT = no limit in the "
+             "report, never counted as at risk. Not affected by the date-range picker; the Tier "
+             "picker applies."),
+    ])
+    economics_sheet["Layouts"][0]["Configuration"]["GridLayout"]["Elements"].extend(
+        _grid([
+            # Below e-unit-econ-table, which ends at row 26.
+            ("e-headroom-at-risk", 0, 26, 36,  4),
+            ("e-headroom-users",   0, 30, 36, 12),
+        ])["GridLayout"]["Elements"]
+    )
+
     # Click-through Action on the All users table: clicking a row sets
     # DrillUser to that row's user_label and navigates to the User-detail
     # sheet. Saves the customer from manually copy-pasting a user_label out
@@ -1717,6 +1765,64 @@ def build_definition(account_id: str, region: str, resource_prefix: str,
             "Status": "ENABLED",
         })
 
+    # PATCH P8 (kiro-enterprise-monitoring): pin the two headroom visuals to the
+    # latest month in the DATA (is_latest_month, computed in the view from the
+    # newest activity_date, so the day the export lags behind the wall clock
+    # does not empty them on the 1st), and let the Economics Tier picker filter
+    # them on user_tier, the column the table shows.
+    filter_groups.append({
+        "FilterGroupId": "fg-latest-month-headroom",
+        "Filters": [{
+            "CategoryFilter": {
+                "FilterId": "f-latest-month-headroom",
+                "Column": {"DataSetIdentifier": "headroom", "ColumnName": "is_latest_month"},
+                "Configuration": {
+                    "CustomFilterConfiguration": {
+                        "MatchOperator": "EQUALS",
+                        "CategoryValue": "Yes",
+                        "NullOption": "NON_NULLS_ONLY",
+                    },
+                },
+            },
+        }],
+        "ScopeConfiguration": {
+            "SelectedSheets": {
+                "SheetVisualScopingConfigurations": [{
+                    "SheetId": "economics",
+                    "Scope": "SELECTED_VISUALS",
+                    "VisualIds": headroom_visuals,
+                }],
+            },
+        },
+        "CrossDataset": "SINGLE_DATASET",
+        "Status": "ENABLED",
+    })
+    filter_groups.append({
+        "FilterGroupId": "fg-tier-headroom",
+        "Filters": [{
+            "CategoryFilter": {
+                "FilterId": "f-tier-headroom",
+                "Column": {"DataSetIdentifier": "headroom", "ColumnName": "user_tier"},
+                "Configuration": {
+                    "CustomFilterConfiguration": {
+                        "MatchOperator": "EQUALS",
+                        "NullOption": "NON_NULLS_ONLY",
+                        "ParameterName": "SelectedTier",
+                    },
+                },
+            },
+        }],
+        "ScopeConfiguration": {
+            "SelectedSheets": {
+                "SheetVisualScopingConfigurations": [
+                    {"SheetId": "economics", "Scope": "ALL_VISUALS"},
+                ],
+            },
+        },
+        "CrossDataset": "SINGLE_DATASET",
+        "Status": "ENABLED",
+    })
+
     # (No explicit "exclude Idle" filter on the segments donut any more: it now
     # reads `base` over the selected date range, where every visible user has
     # >=1 active day in range, so the Idle bucket can't appear. The old filter
@@ -1840,6 +1946,15 @@ def build_definition(account_id: str, region: str, resource_prefix: str,
             "Expression": "sum({credits_used}) - sum({overage_credits_used})",
         },
     ]
+    # PATCH P8 (kiro-enterprise-monitoring): user_id when the user's credit
+    # status is AT_RISK or EXHAUSTED, else NULL. DISTINCT_COUNT of it is the
+    # "Users at risk" KPI - the same shape as the funnel_geN_user fields.
+    # UNKNOWN_LIMIT (no usage_limit in the report) is deliberately not counted.
+    calculated_fields.append({
+        "DataSetIdentifier": "headroom",
+        "Name": "headroom_at_risk_user",
+        "Expression": "ifelse({status} = 'AT_RISK' OR {status} = 'EXHAUSTED', {user_id}, NULL)",
+    })
 
     return {
         "DataSetIdentifierDeclarations": decls,

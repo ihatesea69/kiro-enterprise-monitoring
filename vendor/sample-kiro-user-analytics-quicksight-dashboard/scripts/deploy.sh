@@ -819,14 +819,18 @@ python3 "${ROOT}/scripts/create_dashboard.py" \
 # KEEP IN SYNC WITH cfn/02-quicksight.yaml. If you add a DataSet there, add it
 # to QS_ALL_DATASETS; if its view selects user_label, add it to
 # QS_LABEL_DATASETS too (QS_LABEL_DATASETS must be a subset of QS_ALL_DATASETS).
+# PATCH P8 (kiro-enterprise-monitoring): credit-headroom added to both lists;
+# its view selects user_label.
 QS_ALL_DATASETS=(
     base-user-activity daily-trends user-totals tier-breakdown
     model-usage wow-movers activity-heatmap user-daily-dense
+    credit-headroom
 )
 # The subset whose views resolve user_label (verified against the InputColumns
 # in cfn/02-quicksight.yaml). These are the only ones that can hold PII.
 QS_LABEL_DATASETS=(
     base-user-activity user-totals model-usage wow-movers user-daily-dense
+    credit-headroom
 )
 
 # 6b) When identity mapping is ON, force a SPICE refresh of the datasets whose
