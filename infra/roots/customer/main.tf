@@ -121,6 +121,18 @@ variable "prompt_auditor_principal_arns" {
   default = []
 }
 
+variable "prompt_replication_source_role_arns" {
+  description = "Replication roles of the landing buckets of the other Kiro accounts (central bucket)."
+  type        = list(string)
+  default     = []
+}
+
+variable "prompt_reader_role_arns" {
+  description = "D11: observability-account roles that read the full text."
+  type        = list(string)
+  default     = []
+}
+
 variable "enable_prompt_metadata" {
   type    = bool
   default = false
@@ -189,6 +201,9 @@ module "prompt_logs" {
   observability_account_id = var.observability_account_id
   retention_days           = var.prompt_retention_days
   auditor_principal_arns   = var.prompt_auditor_principal_arns
+
+  replication_source_role_arns = var.prompt_replication_source_role_arns
+  reader_role_arns             = var.prompt_reader_role_arns
 }
 
 module "prompt_metadata" {
