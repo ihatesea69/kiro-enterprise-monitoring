@@ -1,6 +1,12 @@
-# Prompt logs (full text) stay in the customer's Kiro account (task 7.1).
-# Nothing here names the observability account; a precondition enforces it.
-# Provider: customer Kiro account, Region of the Kiro profile.
+# Prompt logs (full text) of the customer's organization (task 7.1).
+# Provider: the account that holds the central bucket (the management account),
+# Region of the Kiro profiles.
+#
+# Kiro in this account writes here directly. Kiro in the other accounts writes a
+# landing bucket in its own account (infra/customer/prompt-landing), which
+# replicates here, so the organization has ONE bucket of prompt logs.
+# The observability account may appear only in the reader statements (D11,
+# reader_role_arns); a precondition enforces it everywhere else.
 #
 # Bucket policy: statement KiroLogsWrite from the Kiro prompt-logging docs.
 # Encryption is SSE-S3 (decided 2026-10-29): no KMS key, so Kiro needs only
@@ -43,6 +49,30 @@ variable "auditor_principal_arns" {
   default     = []
 }
 
+# ---- central bucket of the organization (2026-11-05)
+# Kiro writes only into a bucket of its own account (Kiro docs, user activity:
+# cross-account buckets are not supported), so the other Kiro accounts write a
+# landing bucket (infra/customer/prompt-landing) that replicates here.
+variable "replication_source_role_arns" {
+  description = "Replication roles of the landing buckets in the other Kiro accounts. Empty = this bucket takes only its own account's Kiro."
+  type        = list(string)
+  default     = []
+  validation {
+    condition     = alltrue([for a in var.replication_source_role_arns : can(regex("^arn:aws[a-z-]*:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+$", a))])
+    error_message = "replication_source_role_arns must be exact IAM role ARNs (no wildcard)."
+  }
+}
+
+variable "reader_role_arns" {
+  description = "D11: roles of the observability account that may READ the full text. The only place that account may appear."
+  type        = list(string)
+  default     = []
+  validation {
+    condition     = alltrue([for a in var.reader_role_arns : can(regex("^arn:aws[a-z-]*:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+$", a))])
+    error_message = "reader_role_arns must be exact IAM role ARNs (no wildcard)."
+  }
+}
+
 variable "create_athena" {
   type    = bool
   default = true
@@ -69,30 +99,84 @@ locals {
   db          = "kiro_prompt_audit_${replace(var.slug, "-", "_")}"
   tags        = { Project = "kiro-monitoring", Customer = var.slug, DataClass = "prompt-full-text" }
 
+  has_sources = length(var.replication_source_role_arns) > 0
+  has_readers = length(var.reader_role_arns) > 0
+  # Principal = account root (always exists, so the policy can be applied before
+  # the roles), narrowed to the exact role by aws:PrincipalArn.
+  source_roots = distinct([for a in var.replication_source_role_arns : "arn:${local.p}:iam::${split(":", a)[4]}:root"])
+
+  replication_statements = [
+    {
+      Sid       = "LandingReplicationWrite"
+      Effect    = "Allow"
+      Principal = { AWS = local.source_roots }
+      Action    = ["s3:ReplicateObject", "s3:ReplicateTags"]
+      Resource  = "${local.bucket_arn}/${var.prefix}*"
+      Condition = { ArnEquals = { "aws:PrincipalArn" = var.replication_source_role_arns } }
+    },
+    {
+      Sid       = "LandingReplicationBucket"
+      Effect    = "Allow"
+      Principal = { AWS = local.source_roots }
+      Action    = ["s3:GetBucketVersioning", "s3:ListBucket"]
+      Resource  = local.bucket_arn
+      Condition = { ArnEquals = { "aws:PrincipalArn" = var.replication_source_role_arns } }
+    },
+  ]
+
+  reader_statements = [
+    {
+      Sid       = "CentralReadPromptLogs"
+      Effect    = "Allow"
+      Principal = { AWS = var.reader_role_arns }
+      Action    = "s3:GetObject"
+      Resource  = "${local.bucket_arn}/${var.prefix}*"
+    },
+    {
+      Sid       = "CentralListPromptLogs"
+      Effect    = "Allow"
+      Principal = { AWS = var.reader_role_arns }
+      Action    = ["s3:ListBucket", "s3:GetBucketLocation"]
+      Resource  = local.bucket_arn
+    },
+  ]
+
+  # Everything except the reader statements: the guard below checks this one.
+  bucket_policy_without_readers = jsonencode({
+    Version   = "2012-10-17"
+    Statement = concat(local.base_statements, [for s in local.replication_statements : s if local.has_sources])
+  })
+
   bucket_policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
-      {
-        Sid       = "KiroLogsWrite"
-        Effect    = "Allow"
-        Principal = { Service = "q.amazonaws.com" }
-        Action    = "s3:PutObject"
-        Resource  = "${local.bucket_arn}/${var.prefix}*"
-        Condition = {
-          StringEquals = { "aws:SourceAccount" = local.account_id }
-          ArnLike      = { "aws:SourceArn" = local.kiro_source }
-        }
-      },
-      {
-        Sid       = "DenyInsecureTransport"
-        Effect    = "Deny"
-        Principal = "*"
-        Action    = "s3:*"
-        Resource  = [local.bucket_arn, "${local.bucket_arn}/*"]
-        Condition = { Bool = { "aws:SecureTransport" = "false" } }
-      },
-    ]
+    Statement = concat(
+      local.base_statements,
+      [for s in local.replication_statements : s if local.has_sources],
+      [for s in local.reader_statements : s if local.has_readers],
+    )
   })
+
+  base_statements = [
+    {
+      Sid       = "KiroLogsWrite"
+      Effect    = "Allow"
+      Principal = { Service = "q.amazonaws.com" }
+      Action    = "s3:PutObject"
+      Resource  = "${local.bucket_arn}/${var.prefix}*"
+      Condition = {
+        StringEquals = { "aws:SourceAccount" = local.account_id }
+        ArnLike      = { "aws:SourceArn" = local.kiro_source }
+      }
+    },
+    {
+      Sid       = "DenyInsecureTransport"
+      Effect    = "Deny"
+      Principal = "*"
+      Action    = "s3:*"
+      Resource  = [local.bucket_arn, "${local.bucket_arn}/*"]
+      Condition = { Bool = { "aws:SecureTransport" = "false" } }
+    },
+  ]
 
   auditor_trust = jsonencode({
     Version = "2012-10-17"
@@ -129,6 +213,8 @@ locals {
   })
 
   all_policies = join("\n", [local.bucket_policy, local.auditor_trust, local.auditor_policy])
+  # D11: the observability account may appear in the reader statements only.
+  guarded_policies = join("\n", [local.bucket_policy_without_readers, local.auditor_trust, local.auditor_policy])
 }
 
 resource "aws_s3_bucket" "this" {
@@ -172,6 +258,11 @@ resource "aws_s3_bucket_lifecycle_configuration" "this" {
     expiration {
       days = var.retention_days
     }
+    # Versioning is on when landing buckets replicate here; an expired object
+    # then leaves a noncurrent version, which must not outlive the retention.
+    noncurrent_version_expiration {
+      noncurrent_days = 1
+    }
   }
   rule {
     id     = "expire-athena-results"
@@ -192,9 +283,22 @@ resource "aws_s3_bucket_policy" "this" {
 
   lifecycle {
     precondition {
-      condition     = !strcontains(local.all_policies, var.observability_account_id)
-      error_message = "A prompt-log policy names the observability account. Full text must not leave the customer account."
+      condition     = !strcontains(local.guarded_policies, var.observability_account_id)
+      error_message = "A prompt-log policy names the observability account outside the reader statements (D11)."
     }
+    precondition {
+      condition     = alltrue([for a in var.reader_role_arns : split(":", a)[4] == var.observability_account_id])
+      error_message = "reader_role_arns must be roles of the observability account (D11)."
+    }
+  }
+}
+
+# Replication into this bucket needs versioning on the destination too.
+resource "aws_s3_bucket_versioning" "this" {
+  count  = local.has_sources ? 1 : 0
+  bucket = aws_s3_bucket.this.id
+  versioning_configuration {
+    status = "Enabled"
   }
 }
 

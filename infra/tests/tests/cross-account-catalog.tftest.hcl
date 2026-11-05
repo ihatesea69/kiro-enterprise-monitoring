@@ -242,3 +242,59 @@ run "root_wires_the_lakes_through" {
     error_message = "One lake gives one catalog."
   }
 }
+
+# ------------------------------------------------------------ central prompt logs, dashboard side (2026-11-05)
+
+run "prompt_central_table_projects_accounts_and_days" {
+  command = apply
+  module {
+    source = "../observability/prompt-logs-central"
+  }
+  variables {
+    slug             = "acme"
+    central_bucket   = "acme-kiro-prompt-logs-111122223333"
+    kiro_account_ids = ["111122223333", "222233334444"]
+  }
+  assert {
+    condition     = aws_glue_catalog_table.prompt_logs.parameters["projection.account_id.values"] == "111122223333,222233334444"
+    error_message = "account_id must be projected over exactly the Kiro accounts."
+  }
+  assert {
+    condition     = aws_glue_catalog_table.prompt_logs.parameters["storage.location.template"] == "s3://acme-kiro-prompt-logs-111122223333/kiro-prompt-logs/AWSLogs/$${account_id}/KiroLogs/GenerateAssistantResponse/us-east-1/$${log_date}/"
+    error_message = "Template must follow the Kiro key layout below the prefix."
+  }
+  assert {
+    condition     = aws_glue_catalog_table.prompt_logs.parameters["projection.log_date.range"] == "NOW-6MONTHS,NOW"
+    error_message = "Rolling window equal to the retention, never a fixed old start."
+  }
+  assert {
+    condition     = strcontains(aws_glue_catalog_table.prompt_logs.storage_descriptor[0].columns[0].type, "timestamp:string,modelid:string>")
+    error_message = "The chat request struct must carry modelid."
+  }
+  assert {
+    condition     = alltrue([for s in jsondecode(output.policy_json).Statement : alltrue([for a in flatten([s.Action]) : can(regex("^(s3:(Get|List)|glue:Get)", a))])])
+    error_message = "The dashboard side of the prompt logs may only read."
+  }
+  assert {
+    condition     = [for s in jsondecode(output.policy_json).Statement : s.Resource if s.Sid == "S3ReadCentralPromptLogs"][0] == "arn:aws:s3:::acme-kiro-prompt-logs-111122223333/kiro-prompt-logs/*"
+    error_message = "Object read is limited to the prompt prefix of the central bucket."
+  }
+  assert {
+    condition     = aws_iam_role_policy.read.name == "kiro-acme-QuickSightPromptLogs"
+    error_message = "Own policy name, never one of the sample's policies."
+  }
+}
+
+run "prompt_central_rejects_fixed_start_window" {
+  command = plan
+  module {
+    source = "../observability/prompt-logs-central"
+  }
+  variables {
+    slug             = "acme"
+    central_bucket   = "acme-kiro-prompt-logs-111122223333"
+    kiro_account_ids = ["111122223333"]
+    projection_range = "2025-01-01,NOW"
+  }
+  expect_failures = [var.projection_range]
+}

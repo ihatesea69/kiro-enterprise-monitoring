@@ -410,3 +410,134 @@ run "cur_export_is_cid_layout_with_kiro_filter" {
     error_message = "Destination must follow CID's cur2/<source account>/cid-cur2/data/ layout."
   }
 }
+
+# ------------------------------------------------------------ central prompt bucket + landing (2026-11-05)
+# 111122223333 = management account (central bucket, mocked caller),
+# 222233334444 = another Kiro account, 444455556666 = observability.
+
+run "prompt_logs_central_takes_replicas_and_one_reader" {
+  command = apply
+  module {
+    source = "../customer/prompt-logs"
+  }
+  variables {
+    slug                         = "acme"
+    observability_account_id     = "444455556666"
+    retention_days               = 180
+    replication_source_role_arns = ["arn:aws:iam::222233334444:role/kiro-mon-prompt-replication-kiro01"]
+    reader_role_arns             = ["arn:aws:iam::444455556666:role/service-role/aws-quicksight-service-role-v0"]
+  }
+  assert {
+    condition     = length(aws_s3_bucket_versioning.this) == 1
+    error_message = "A replication destination needs versioning."
+  }
+  assert {
+    condition     = [for s in jsondecode(aws_s3_bucket_policy.this.policy).Statement : s.Principal.AWS if s.Sid == "LandingReplicationWrite"][0] == ["arn:aws:iam::222233334444:root"]
+    error_message = "Replication principal is the source account root (always exists)."
+  }
+  assert {
+    condition     = [for s in jsondecode(aws_s3_bucket_policy.this.policy).Statement : s.Condition.ArnEquals["aws:PrincipalArn"] if s.Sid == "LandingReplicationWrite"][0] == ["arn:aws:iam::222233334444:role/kiro-mon-prompt-replication-kiro01"]
+    error_message = "Replication is narrowed to the exact landing role."
+  }
+  assert {
+    condition     = [for s in jsondecode(aws_s3_bucket_policy.this.policy).Statement : s.Action if s.Sid == "LandingReplicationWrite"][0] == ["s3:ReplicateObject", "s3:ReplicateTags"]
+    error_message = "No ReplicateDelete: deletes in a landing bucket never reach the central copy."
+  }
+  assert {
+    condition     = [for s in jsondecode(aws_s3_bucket_policy.this.policy).Statement : s.Principal.AWS if s.Sid == "CentralReadPromptLogs"][0] == ["arn:aws:iam::444455556666:role/service-role/aws-quicksight-service-role-v0"]
+    error_message = "D11: the only observability principal is the named reader role."
+  }
+  assert {
+    condition     = [for s in jsondecode(aws_s3_bucket_policy.this.policy).Statement : s.Action if s.Sid == "CentralReadPromptLogs"][0] == "s3:GetObject"
+    error_message = "The reader may only read."
+  }
+  assert {
+    condition     = [for r in aws_s3_bucket_lifecycle_configuration.this.rule : r.noncurrent_version_expiration[0].noncurrent_days if r.id == "expire-prompt-logs"] == [1]
+    error_message = "Noncurrent versions must not outlive the retention."
+  }
+}
+
+run "prompt_logs_refuses_reader_outside_observability_account" {
+  command = plan
+  module {
+    source = "../customer/prompt-logs"
+  }
+  variables {
+    slug                     = "acme"
+    observability_account_id = "444455556666"
+    retention_days           = 180
+    reader_role_arns         = ["arn:aws:iam::222233334444:role/someone"]
+  }
+  expect_failures = [aws_s3_bucket_policy.this]
+}
+
+run "prompt_logs_refuses_wildcard_reader" {
+  command = plan
+  module {
+    source = "../customer/prompt-logs"
+  }
+  variables {
+    slug                     = "acme"
+    observability_account_id = "444455556666"
+    retention_days           = 180
+    reader_role_arns         = ["arn:aws:iam::444455556666:role/*"]
+  }
+  expect_failures = [var.reader_role_arns]
+}
+
+run "prompt_landing_replicates_to_central_without_deletes" {
+  command = apply
+  module {
+    source = "../customer/prompt-landing"
+  }
+  variables {
+    slug               = "kiro01"
+    central_bucket     = "acme-kiro-prompt-logs-333344445555"
+    central_account_id = "333344445555"
+  }
+  assert {
+    condition     = output.s3_uri_for_kiro_console == "s3://kiro-prompt-landing-111122223333/kiro-prompt-logs/"
+    error_message = "Console URI must be the landing bucket of this account."
+  }
+  assert {
+    condition     = [for r in aws_s3_bucket_replication_configuration.this.rule : r.delete_marker_replication[0].status] == ["Disabled"]
+    error_message = "Delete markers must not be replicated."
+  }
+  assert {
+    condition     = [for r in aws_s3_bucket_replication_configuration.this.rule : r.destination[0].account] == ["333344445555"]
+    error_message = "Destination account must be the central account."
+  }
+  assert {
+    condition     = [for s in jsondecode(output.replication_policy_json).Statement : s.Resource if s.Sid == "WriteCentral"][0] == "arn:aws:s3:::acme-kiro-prompt-logs-333344445555/kiro-prompt-logs/*"
+    error_message = "The role writes only the prompt prefix of the central bucket."
+  }
+  assert {
+    condition     = !strcontains(output.replication_policy_json, "s3:Delete") && !strcontains(output.replication_policy_json, "ReplicateDelete")
+    error_message = "The replication role must not delete."
+  }
+  assert {
+    condition     = [for s in jsondecode(output.bucket_policy_json).Statement : s.Condition.StringEquals["aws:SourceAccount"] if s.Sid == "KiroLogsWrite"][0] == "111122223333"
+    error_message = "Only this account's Kiro writes the landing bucket."
+  }
+  assert {
+    condition     = [for r in aws_s3_bucket_lifecycle_configuration.this.rule : r.expiration[0].days] == [30]
+    error_message = "Landing copies expire after landing_retention_days."
+  }
+  assert {
+    condition     = output.replication_role_arn == "arn:aws:iam::111122223333:role/kiro-mon-prompt-replication-kiro01"
+    error_message = "Role ARN handed to the central bucket must be deterministic."
+  }
+}
+
+run "prompt_landing_refuses_the_central_account" {
+  command = plan
+  module {
+    source = "../customer/prompt-landing"
+  }
+  variables {
+    slug               = "acme"
+    central_bucket     = "acme-kiro-prompt-logs-111122223333"
+    central_account_id = "111122223333"
+  }
+  expect_failures = [aws_s3_bucket.this]
+}

@@ -152,6 +152,33 @@ module "cross_account_catalog" {
   quicksight_role_name = var.quicksight_role_name
 }
 
+# ---- central prompt logs of the customer organization (D11, 2026-11-05)
+variable "prompt_central_bucket" {
+  description = "Customer's central prompt-log bucket. Null = nothing is created."
+  type        = string
+  default     = null
+}
+
+variable "prompt_kiro_account_ids" {
+  description = "Kiro accounts whose logs land in the central bucket."
+  type        = list(string)
+  default     = []
+}
+
+module "prompt_logs_central" {
+  count                = var.prompt_central_bucket == null ? 0 : 1
+  source               = "../../observability/prompt-logs-central"
+  slug                 = var.slug
+  central_bucket       = var.prompt_central_bucket
+  kiro_region          = var.kiro_region
+  kiro_account_ids     = var.prompt_kiro_account_ids
+  quicksight_role_name = var.quicksight_role_name
+}
+
+output "prompt_logs_glue_database" {
+  value = try(module.prompt_logs_central[0].glue_database, null)
+}
+
 output "kiro_lakes_consumer_role_arn" {
   description = "Set as consumer_role_arns in infra/roots/member-account."
   value       = try(module.cross_account_catalog[0].consumer_role_arn, null)

@@ -132,6 +132,43 @@ module "data_lake" {
   manage_glue_resource_policy = var.manage_glue_resource_policy
 }
 
+# ---- prompt logs: landing bucket replicated into the central bucket (2026-11-05)
+variable "prompt_central_bucket" {
+  description = "Central prompt-log bucket in the management account. Null = no landing bucket."
+  type        = string
+  default     = null
+}
+
+variable "prompt_central_account_id" {
+  type    = string
+  default = null
+}
+
+variable "prompt_landing_retention_days" {
+  type    = number
+  default = 30
+}
+
+module "prompt_landing" {
+  count                    = var.prompt_central_bucket == null ? 0 : 1
+  source                   = "../../customer/prompt-landing"
+  providers                = { aws = aws.report }
+  slug                     = var.slug
+  central_bucket           = var.prompt_central_bucket
+  central_account_id       = var.prompt_central_account_id
+  landing_retention_days   = var.prompt_landing_retention_days
+  permissions_boundary_arn = var.permissions_boundary_arn
+}
+
+output "prompt_logs_s3_uri_for_kiro_console" {
+  description = "Enter this in the Kiro console of this account, prompt logging."
+  value       = try(module.prompt_landing[0].s3_uri_for_kiro_console, null)
+}
+
+output "prompt_replication_role_arn" {
+  value = try(module.prompt_landing[0].replication_role_arn, null)
+}
+
 output "report_s3_uri_for_kiro_console" {
   description = "Enter this in the Kiro console, user activity report."
   value       = module.data_lake.report_s3_uri_for_kiro_console
