@@ -254,7 +254,7 @@ resource "aws_glue_catalog_table" "prompt_logs" {
     }
     columns {
       name = "records"
-      type = "array<struct<generateassistantresponseeventrequest:struct<prompt:string,chattriggertype:string,customizationarn:string,userid:string,timestamp:string>,generateassistantresponseeventresponse:struct<assistantresponse:string,followupprompts:string,messagemetadata:struct<conversationid:string,utteranceid:string>,requestid:string>,generatecompletionseventrequest:struct<leftcontext:string,rightcontext:string,filename:string,userid:string,timestamp:string>,generatecompletionseventresponse:struct<completions:array<string>,requestid:string>>>"
+      type = "array<struct<generateassistantresponseeventrequest:struct<prompt:string,chattriggertype:string,customizationarn:string,userid:string,timestamp:string,modelid:string>,generateassistantresponseeventresponse:struct<assistantresponse:string,followupprompts:string,messagemetadata:struct<conversationid:string,utteranceid:string>,requestid:string>,generatecompletionseventrequest:struct<leftcontext:string,rightcontext:string,filename:string,userid:string,timestamp:string>,generatecompletionseventresponse:struct<completions:array<string>,requestid:string>>>"
     }
   }
 }

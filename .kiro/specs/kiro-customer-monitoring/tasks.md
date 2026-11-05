@@ -323,6 +323,7 @@ Task 4 và 5 chạy song song được sau task 2. Task 6 và 8 phải chờ k�
   - [ ] 7.1 Sửa và apply `infra/customer/prompt-logs` qua root `infra/roots/customer` **[XÁC NHẬN]**
     - Trạng thái 2026-10-29: module xong, 3 test pass, gồm điều kiện plan không chứa account trung tâm.
     - Sửa code: thêm cột `modelid` vào bảng `prompt_logs` (design.md mục 3.5), kèm test.
+    - Trạng thái 2026-11-05: cột `modelid` và 3 assert mới xong (modelid, lifecycle theo `retention_days`, không `force_destroy`), 17/17 test của `customer.tftest.hcl` pass. Bỏ `modelid` thì assert fail đúng chỗ. Plan pilot: 9 add, 0 change, 0 destroy, mọi resource thuộc `module.prompt_logs`, 0 IAM role, account trung tâm chỉ có trong biến đầu vào. Chờ xác nhận apply.
     - `customers/<khách>/prompt-logs.tfvars`: chỉ `enable_prompt_logs = true` và `prompt_retention_days` theo D12, mọi lớp khác để tắt. State ở `customers/<khách>/state-prompt-logs/`.
     - Bucket SSE-S3 (D9), Block Public Access, chặn kết nối không TLS, lifecycle theo D12, bảng Athena và role `kiro-prompt-auditor` của khách. Chưa có principal nào của account trung tâm.
     - Người làm: Agent, người vận hành (xác nhận)

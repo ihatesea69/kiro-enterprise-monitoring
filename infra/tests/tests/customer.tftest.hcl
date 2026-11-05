@@ -299,6 +299,18 @@ run "prompt_logs_never_name_the_observability_account" {
     condition     = !strcontains(output.policies_json, "kms:")
     error_message = "No policy grants a KMS action."
   }
+  assert {
+    condition     = strcontains(aws_glue_catalog_table.prompt_logs[0].storage_descriptor[0].columns[0].type, "timestamp:string,modelid:string>")
+    error_message = "The chat request struct must carry modelid (design 3.5)."
+  }
+  assert {
+    condition     = [for r in aws_s3_bucket_lifecycle_configuration.this.rule : r.expiration[0].days if r.id == "expire-prompt-logs"] == [90]
+    error_message = "Prompt logs must expire after retention_days."
+  }
+  assert {
+    condition     = !aws_s3_bucket.this.force_destroy
+    error_message = "The prompt bucket must not be force-destroyed (Requirement 10.6)."
+  }
 }
 
 run "prompt_logs_guard_fires_when_policy_names_observability_account" {
